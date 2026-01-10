@@ -81,11 +81,11 @@ flowchart TB
         AD -->|No| AI["PR approved"]
     end
 
-    style Stage1 fill:#1565c0,color:#fff
-    style Stage2 fill:#e65100,color:#fff
-    style Stage3 fill:#2e7d32,color:#fff
-    style Stage4 fill:#6a1b9a,color:#fff
-    style Stage5 fill:#c62828,color:#fff
+    style Stage1 fill:#334155,color:#fff
+    style Stage2 fill:#475569,color:#fff
+    style Stage3 fill:#1e3a5f,color:#fff
+    style Stage4 fill:#374151,color:#fff
+    style Stage5 fill:#1f2937,color:#fff
 ```
 
 ## System Architecture
