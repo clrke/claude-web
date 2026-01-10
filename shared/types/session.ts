@@ -47,7 +47,7 @@ export interface Session {
   updatedAt: string;
 }
 
-export interface SessionStatus {
+export interface SessionRuntimeStatus {
   version: string;
   sessionId: string;
   timestamp: string;
