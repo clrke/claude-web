@@ -88,11 +88,16 @@ flowchart TB
 
     subgraph Stage3["Stage 3: Implementation"]
         O --> Q["Execute plan step"]
-        Q --> R{"Checkpoint reached?"}
-        R -->|Yes| R2{"TODOs or blockers?"}
-        R2 -->|Yes| TODO["Collect TODOs/blockers"]
-        TODO --> TODO2["Return to Stage 2"]
-        TODO2 --> G
+        Q --> BLOCK{"Critical blocker?"}
+        BLOCK -->|Yes| PAUSE["Pause immediately"]
+        PAUSE --> ASKUSER["Present blocker to user"]
+        ASKUSER --> GUIDANCE["User provides guidance"]
+        GUIDANCE --> Q
+        BLOCK -->|No| COLLECT["Collect non-critical items"]
+        COLLECT --> R{"Checkpoint reached?"}
+        R -->|Yes| R2{"Items collected?"}
+        R2 -->|Yes| TODO["Return to Stage 2"]
+        TODO --> G
         R2 -->|No| X
         R -->|No| X{"More steps?"}
         X -->|Yes| Q
@@ -274,35 +279,7 @@ Each review iteration checks for:
 | **Security** | SQL injection, XSS vulnerabilities, exposed secrets, missing auth checks |
 | **Performance** | N+1 queries, missing indexes, unnecessary re-renders, large bundle size |
 
-### TODO Handling (Re-planning Flow)
-
-When Claude encounters unknowns during implementation, handling depends on severity:
-
-```mermaid
-flowchart TB
-    subgraph Implementation["Stage 3: Implementation"]
-        A["Execute plan step"] --> B{"Unknown encountered?"}
-        B -->|Critical blocker| C["Pause immediately"]
-        C --> D["Present blocker to user"]
-        D --> E["User provides guidance"]
-        E --> A
-        B -->|Non-critical| F["Add to collection"]
-        F --> G{"Checkpoint reached?"}
-        G -->|No| A
-        G -->|Yes| H{"Items collected?"}
-        H -->|Yes| I["Return to Plan Review"]
-        H -->|No| J["Continue to next step"]
-    end
-
-    subgraph PlanReview["Stage 2: Plan Review (Re-entry)"]
-        I --> K["Present collected items"]
-        K --> L["Full plan re-review"]
-        L --> M["Update plan with new steps"]
-        M --> N["Resume implementation"]
-    end
-```
-
-### Blocker vs Non-Critical Unknown
+### Implementation Unknowns
 
 | Situation | Handling | Example |
 |-----------|----------|---------|
