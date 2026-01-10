@@ -2031,7 +2031,7 @@ When prompting Claude Code, instruct it to spawn these specialized subagents:
 | **Database Agent** | SQL, ORMs, migrations | Schema analysis, query review, migration planning |
 | **DevOps Agent** | CI/CD, Docker, infra | Pipeline review, deployment analysis, config checks |
 | **Test Agent** | Jest, Playwright, testing patterns | Test coverage analysis, test strategy review |
-| **CI Agent** | GitHub Actions, CI status | Poll CI status, wait for checks to complete (Stage 5) |
+| **CI Agent** | GitHub Actions, CI status | Poll CI status, wait for checks to complete (Stage 5 only) |
 
 ### Usage by Workflow Stage
 
@@ -2041,7 +2041,7 @@ When prompting Claude Code, instruct it to spawn these specialized subagents:
 | **Plan Review** | Each agent reviews plan for issues in their domain |
 | **Implementation** | Main Claude implements; spawns agents for read-only guidance when needed |
 | **PR Creation** | Spawn agents to review changes before PR |
-| **PR Review** | Domain agents review changes; CI Agent polls for check status |
+| **PR Review** | Domain agents review changes from their specialty lens |
 | **After /compact** | Re-explore relevant files to restore context for current stage |
 
 ### Prompt Template
@@ -2060,8 +2060,6 @@ subagents for parallel analysis:
 Subagents should focus on read-only exploration and analysis.
 Implementation is handled by the main Claude instance.
 ```
-
-**Stage 5 addition:** CI Agent is spawned to poll GitHub Actions status via `gh pr checks --watch`. See [Stage 5 prompt](#stage-5-pr-review) for details.
 
 ### Subagent Failure Handling
 
