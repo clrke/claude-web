@@ -113,12 +113,12 @@ flowchart TB
         AC --> WAIT{"All results ready?"}
         WAIT -->|No| AC
         WAIT -->|Yes| CHECK{"Issues or CI failures?"}
-        CHECK -->|Issues found| AF["Present issues as<br/>[DECISION_NEEDED]"]
+        CHECK -->|Issues found| AF["Present issues<br/>as decisions"]
         AF --> AG["User decides action"]
-        AG --> AH["Apply fixes"]
-        AH --> AC
-        CHECK -->|CI failing| CIFIX["Present CI failures<br/>as [DECISION_NEEDED]"]
-        CIFIX --> AH
+        AG --> REPLAN["Return to Stage 2<br/>(update plan)"]
+        REPLAN --> G
+        CHECK -->|CI failing| CIFIX["Present CI failures<br/>as decisions"]
+        CIFIX --> AG
         CHECK -->|All clear| AI["PR approved"]
         AI --> AJ{"User chooses action"}
         AJ -->|Open in GitHub| AK["User merges via GitHub web"]
@@ -1838,14 +1838,15 @@ Would you like to address this?
    - Priority 2: Major issues - should be resolved or justified
    - Priority 3: Suggestions - optional improvements
 
-5. After user resolves all priority 1 and 2 decisions, wait for CI Agent results.
+5. If issues or CI failures found, return to Stage 2 to update the plan with fixes,
+   then re-implement and create a new PR for review.
 
-6. If CI fails, present failures as [DECISION_NEEDED] with fix options:
+6. Report CI status:
    [CI_STATUS status="passing|failing|pending"]
    {{checkResults}}
    [/CI_STATUS]
 
-7. When CI passes and all issues resolved:
+7. When CI passes and no issues found:
 [PR_APPROVED]
 The PR is ready to merge. All CI checks passing.
 [/PR_APPROVED]
