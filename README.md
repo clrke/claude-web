@@ -12,12 +12,25 @@ This web app provides a guided interface for Claude Code that supports:
 - **Iterative review cycles** (recommended 10x) with sign-off approval
 - **PR creation and review** integrated into the workflow
 
+## Feature Template
+
+When starting a new session, users fill out a structured template:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| **Title** | Yes | Short, descriptive name for the feature |
+| **Description** | Yes | Detailed explanation of what the feature should do |
+| **Acceptance Criteria** | Yes | Bullet list of conditions that must be met |
+| **Affected Files** | No | Known files that will likely need changes |
+| **Technical Notes** | No | Implementation hints, constraints, or preferences |
+| **Priority** | Yes | High / Medium / Low |
+
 ## Workflow Architecture
 
 ```mermaid
 flowchart TB
     subgraph Stage1["Stage 1: Feature Discovery"]
-        A["User describes feature"] --> B["Subagents study codebase"]
+        A["User submits feature template"] --> B["Subagents study codebase"]
         B --> C["Present clarifying questions<br/>(structured forms)"]
         C --> D["User answers"]
         D --> E{"More questions?"}
@@ -27,7 +40,7 @@ flowchart TB
 
     subgraph Stage2["Stage 2: Plan Review (10x recommended)"]
         F --> G["Display plan in visual editor"]
-        G --> H["Subagents review for shortcuts"]
+        G --> H["Subagents review for issues"]
         H --> I["Present findings as forms"]
         I --> J["User reviews & answers"]
         J --> K{"Approve iteration?"}
@@ -79,6 +92,10 @@ flowchart TB
         AG --> AH["Apply fixes"]
         AH --> AC
         AD -->|No| AI["PR approved"]
+        AI --> AJ{"User chooses action"}
+        AJ -->|Merge now| AK["Merge PR to base branch"]
+        AJ -->|Keep open| AL["PR stays open, session complete"]
+        AJ -->|Start new feature| AM["Begin new session"]
     end
 
     style Stage1 fill:#334155,color:#fff
@@ -215,6 +232,17 @@ flowchart TB
     Findings --> SignOff
 ```
 
+### Review Issue Categories
+
+Each review iteration checks for:
+
+| Category | Examples |
+|----------|----------|
+| **Code Quality** | Missing error handling, hardcoded values, no input validation, missing tests |
+| **Architecture** | Tight coupling, missing abstractions, unclear separation of concerns, tech debt |
+| **Security** | SQL injection, XSS vulnerabilities, exposed secrets, missing auth checks |
+| **Performance** | N+1 queries, missing indexes, unnecessary re-renders, large bundle size |
+
 ### TODO Kanban Board
 
 ```mermaid
@@ -256,6 +284,33 @@ flowchart TB
 | **Non-blocker** | Can continue, but needs addressing | Adds TODO comment + kanban card |
 | **Deferred** | User explicitly defers | Moves to backlog, doesn't block PR |
 
+### Build/Test Failure Handling
+
+When implementation encounters build or test failures:
+
+```mermaid
+flowchart LR
+    A["Build/Test Failure"] --> B["Claude auto-fix attempt"]
+    B --> C{"Fixed?"}
+    C -->|Yes| D["Continue execution"]
+    C -->|No, after 3 attempts| E["Pause & ask user"]
+    E --> F["User provides guidance"]
+    F --> B
+```
+
+- Claude automatically attempts to fix build/test failures
+- After 3 failed attempts, pauses and presents error to user
+- User provides guidance, Claude retries
+
+### Git Commit Strategy
+
+Commits are created **only when all TODOs are resolved**:
+
+- No intermediate commits during implementation
+- Single atomic commit when "All TODOs resolved?" gate passes
+- Ensures clean git history without WIP commits
+- Rollback = discard all uncommitted changes
+
 ## Database Schema
 
 ```mermaid
@@ -270,7 +325,11 @@ erDiagram
 
     sessions {
         int id PK
+        string title
         string feature_description
+        string project_path
+        string base_branch
+        string feature_branch
         string status
         int current_stage
         datetime created_at
@@ -543,6 +602,49 @@ flowchart TB
         Submit["Submit Answers"]
     end
 ```
+
+## Configuration
+
+### Branch Strategy
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Default Base Branch** | Branch to create feature branches from | `main` |
+| **Branch Naming** | Pattern for feature branches | `feature/{session-id}` |
+| **Auto-push** | Push commits automatically | `true` |
+
+Can be overridden per session when starting a new feature.
+
+### Multi-Session Support
+
+Users can work on multiple features simultaneously:
+
+```mermaid
+flowchart LR
+    subgraph Sessions["Active Sessions"]
+        S1["Session 1: Auth feature<br/>Stage 3: Implementation"]
+        S2["Session 2: Dashboard<br/>Stage 2: Review (5/10)"]
+        S3["Session 3: API refactor<br/>Stage 5: PR Review"]
+    end
+
+    User["User"] --> S1
+    User --> S2
+    User --> S3
+```
+
+- Each session has independent state and progress
+- Switch between sessions freely
+- Each session uses its own feature branch
+- Sessions persist until explicitly closed
+
+### Plan Editing
+
+Plans can **only be modified through Claude**, not directly by user:
+
+- User requests changes via clarifying questions
+- Claude validates and applies modifications
+- Prevents invalid plan states
+- Maintains consistency between plan and implementation
 
 ## Tech Stack
 
