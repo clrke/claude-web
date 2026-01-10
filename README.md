@@ -1060,6 +1060,15 @@ Summary of all changes made.
 [/IMPLEMENTATION_COMPLETE]
 ```
 
+**Plan Updates in Stage 3+:**
+
+`[DECISION_NEEDED]` answers continue to update the plan even after Stage 2:
+- User answers a blocker → Claude updates plan steps if needed
+- Discovered dependencies → Added as new steps to the plan
+- Scope changes → Plan reflects current reality
+
+The plan is a living document throughout the session, not frozen after approval.
+
 #### Stage 4: PR Creation
 
 After compact, recontextualized with: git diff, commit history, changed files, test results.
