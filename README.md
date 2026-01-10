@@ -357,6 +357,54 @@ flowchart LR
 - Prevents runaway token consumption
 - Test-only detection prevents Claude from getting stuck in test loops
 
+**Output Length Tracking:**
+
+The server tracks output length across spawns to detect declining engagement:
+
+```
+~/.clrke/<project_id>/<feature_id>/.last_output_length
+```
+
+- Stores character count of previous Claude response
+- Compares current output length to previous
+- 70%+ reduction triggers HALF_OPEN state (possible stagnation)
+- Helps detect when Claude is "giving up" or losing focus
+
+**Circuit Breaker History:**
+
+State transitions are logged to a history file for debugging and analysis:
+
+```
+~/.clrke/<project_id>/<feature_id>/.circuit_breaker_history
+```
+
+```json
+{
+  "transitions": [
+    {
+      "timestamp": "2026-01-10T14:30:00Z",
+      "from": "CLOSED",
+      "to": "HALF_OPEN",
+      "trigger": "no_file_changes",
+      "spawnCount": 3,
+      "context": "3 consecutive spawns without file modifications"
+    },
+    {
+      "timestamp": "2026-01-10T14:35:00Z",
+      "from": "HALF_OPEN",
+      "to": "CLOSED",
+      "trigger": "user_intervention",
+      "context": "User provided guidance, resuming normal operation"
+    }
+  ]
+}
+```
+
+History is useful for:
+- Post-session analysis of stalls
+- Tuning circuit breaker thresholds
+- Identifying patterns in Claude behavior
+
 ### Implementation Status Protocol
 
 During Stage 3, Claude outputs structured status updates for real-time tracking:
@@ -416,9 +464,28 @@ Prevents runaway API costs with hourly limits:
 - User can override limit for current session (with warning)
 
 **API 5-Hour Limit Detection:**
-- If Claude returns "usage limit reached", pause session
-- Notify user with estimated wait time
-- Option to wait or close session
+
+Anthropic enforces a 5-hour rolling usage limit. When hit:
+
+| Detection | Pattern |
+|-----------|---------|
+| Error message | Contains "usage limit" or "rate limit exceeded" |
+| Response code | Non-zero exit with specific error patterns |
+
+**Handling Flow:**
+1. Claude execution returns with limit error
+2. Server detects pattern and pauses session
+3. UI shows notification with options:
+   - **Wait and retry** - Auto-retry after 60 minutes
+   - **Pause session** - Save state, user resumes manually later
+   - **Close session** - End session, preserve uncommitted changes
+4. If user chooses wait, countdown timer displayed
+5. After wait period, auto-retry the last operation
+
+**Wait Time Strategy:**
+- Default wait: 60 minutes (conservative)
+- Countdown displayed in UI with real-time updates
+- User can cancel wait and choose different option
 
 ### Logging & Debugging
 
@@ -428,7 +495,7 @@ Comprehensive logging for debugging and audit:
 |----------|----------|---------|
 | Server logs | `logs/server.log` | API requests, WebSocket events, errors |
 | Claude outputs | `logs/claude_{sessionId}_{timestamp}.log` | Raw Claude CLI output per spawn |
-| Session events | Database `session_events` table | Stage transitions, user actions, decisions |
+| Session events | `~/.clrke/<project_id>/<feature_id>/events.json` | Stage transitions, user actions, decisions |
 
 **Log Levels:**
 - `INFO` - Normal operations (stage transitions, questions asked)
@@ -453,6 +520,66 @@ Comprehensive logging for debugging and audit:
 - Claude output logs: One file per spawn, cleaned up after `LOG_RETENTION_DAYS`
 - Archived sessions: Logs moved to `logs/archive/{sessionId}/` on session completion
 - Cleanup job: Runs daily at midnight to remove expired logs
+
+### Server Startup
+
+Validation checks before accepting requests:
+
+| Check | Validation | On Failure |
+|-------|------------|------------|
+| Claude CLI | `claude --version` succeeds | Exit with error |
+| Data directory | `~/.clrke/` exists or can be created | Exit with error |
+| Git available | `git --version` succeeds | Exit with error |
+| Node version | >= 18.0.0 | Exit with warning |
+| Port available | Configured port not in use | Exit with error |
+
+**Startup Sequence:**
+1. Load environment variables
+2. Run validation checks
+3. Initialize file storage service
+4. Start HTTP server
+5. Initialize WebSocket server
+6. Log "Server ready on port {PORT}"
+
+**Health Check Endpoint:**
+```
+GET /health
+```
+Returns:
+```json
+{
+  "status": "healthy",
+  "version": "1.0.0",
+  "uptime": 3600,
+  "checks": {
+    "claude": true,
+    "storage": true,
+    "git": true
+  }
+}
+```
+
+### Graceful Shutdown
+
+Clean shutdown on SIGTERM/SIGINT:
+
+**Shutdown Sequence:**
+1. Stop accepting new requests
+2. Wait for active Claude processes to complete (max 30s)
+3. Save any pending session state
+4. Close WebSocket connections
+5. Close HTTP server
+6. Exit with code 0
+
+**SIGKILL Fallback:**
+- If graceful shutdown exceeds 60 seconds, force terminate
+- Active Claude processes killed with SIGKILL
+- Session state may be inconsistent (marked as `interrupted` on next startup)
+
+**Recovery on Next Startup:**
+- Scan for sessions in `active` status
+- If Claude process not running, mark as `interrupted`
+- User prompted to resume or rollback interrupted sessions
 
 ### Git Commit Strategy
 
@@ -745,6 +872,39 @@ All file writes use the temp-file-then-rename pattern for atomicity:
 
 File locking (via `proper-lockfile`) prevents concurrent write conflicts.
 
+### State File Corruption Recovery
+
+If JSON state files become corrupted (power loss, disk issues), the server auto-recovers:
+
+**Detection:**
+```typescript
+function isValidJson(filePath: string): boolean {
+  try {
+    JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+```
+
+**Recovery by File Type:**
+
+| File | Recovery Action |
+|------|-----------------|
+| `session.json` | Restore from `.bak` if valid; otherwise mark session as corrupted |
+| `plan.json` | Restore from `plan-history/` latest version |
+| `status.json` | Recreate with default values (non-critical) |
+| `progress.json` | Recreate empty (transient data) |
+| `events.json` | Restore from `.bak`; if invalid, start fresh (log warning) |
+
+**Recovery Flow:**
+1. On file read, validate JSON structure
+2. If invalid, check for `.bak` file
+3. If `.bak` valid, restore and log warning
+4. If `.bak` invalid, use fallback strategy per file type
+5. Log corruption event for debugging
+
 ## WebSocket Events
 
 ### Workflow Events
@@ -894,21 +1054,30 @@ sequenceDiagram
 
 | Flag | Purpose |
 |------|---------|
-| `--continue` | Resume session context across spawns |
+| `--resume <sessionId>` | Resume specific session by ID (required for multi-instance) |
 | `--output-format json` | Structured output parsing |
 | `--allowedTools` | Control available tools per stage (comma-separated) |
 | `--append-system-prompt` | Inject loop context into Claude's system prompt |
+| `--dangerously-skip-permissions` | Bypass permission prompts (Stage 3 only) |
 | `-p` | Pass prompts programmatically |
 
 **Allowed Tools by Stage:**
 
-| Stage | Tools | Rationale |
-|-------|-------|-----------|
-| Stage 1: Discovery | `Read,Glob,Grep,Task` | Read-only exploration of codebase |
-| Stage 2: Plan Review | `Read,Glob,Grep,Task` | Read-only review and analysis |
-| Stage 3: Implementation | `Read,Write,Edit,Bash,Glob,Grep,Task` | Full access for implementation |
-| Stage 4: PR Creation | `Read,Bash(git *),Bash(gh *)` | Git operations and PR creation only |
-| Stage 5: PR Review | `Read,Glob,Grep,Task,Bash(git diff*)` | Read-only review with diff access |
+| Stage | Tools | Permissions | Rationale |
+|-------|-------|-------------|-----------|
+| Stage 1: Discovery | `Read,Glob,Grep,Task` | Normal | Read-only exploration of codebase |
+| Stage 2: Plan Review | `Read,Glob,Grep,Task` | Normal | Read-only review and analysis |
+| Stage 3: Implementation | `Read,Write,Edit,Bash,Glob,Grep,Task` | `--dangerously-skip-permissions` | Full access for uninterrupted implementation |
+| Stage 4: PR Creation | `Read,Bash(git:*),Bash(gh:*)` | Normal | Git operations and PR creation only |
+| Stage 5: PR Review | `Read,Glob,Grep,Task,Bash(git:diff*)` | Normal | Read-only review with diff access |
+
+**Stage 3 Permission Bypass:**
+
+Stage 3 uses `--dangerously-skip-permissions` to enable uninterrupted implementation:
+- User has already approved the plan in Stage 2
+- Permission prompts would break automated execution flow
+- Tool restrictions (`--allowedTools`) still limit what Claude can do
+- Rollback mechanism provides safety net if something goes wrong
 
 **Note:** Plan mode is handled via the `EnterPlanMode` tool in prompts, not a CLI flag. Claude enters plan mode programmatically based on prompt instructions.
 
@@ -916,10 +1085,21 @@ sequenceDiagram
 
 Session context is maintained across Claude Code spawns (like Ralph):
 
-1. **`--continue` flag** - Passed to Claude CLI to maintain conversation context
-2. **Session ID persistence** - Extracted from Claude's JSON output, stored in database
+1. **`--resume <sessionId>` flag** - Resumes a specific session by ID (required for multi-instance support)
+2. **Session ID persistence** - Extracted from Claude's JSON output, stored in session.json
 3. **24-hour expiration** - Sessions expire after 24 hours of inactivity
 4. **Loop context** - Previous actions/state appended to help Claude understand where it left off
+
+**Multi-Instance Support:**
+- Each session has a unique `claudeSessionId` stored in session.json
+- `--resume <sessionId>` is always used (never `--continue`)
+- Allows multiple Claude instances to run concurrently on different features
+- Session ID is extracted from first spawn and reused for subsequent spawns
+
+**Cross-Platform Date Handling:**
+- Session expiration uses ISO 8601 timestamps for portability
+- Date parsing handles both GNU date (Linux) and BSD date (macOS) formats
+- Timestamps stored in UTC to avoid timezone issues
 
 **Claude CLI JSON Response Format:**
 
@@ -941,7 +1121,7 @@ When using `--output-format json`, Claude CLI returns:
 | Field | Description |
 |-------|-------------|
 | `result` | Claude's text response (parse for markers) |
-| `sessionId` | Session ID for `--continue` flag |
+| `sessionId` | Session ID for `--resume` flag |
 | `costUSD` | API cost for this call |
 | `durationMs` | Execution time in milliseconds |
 | `isError` | Whether an error occurred |
@@ -1128,6 +1308,38 @@ When in doubt, mark as valid to surface for user review.
 ```
 
 This prevents unnecessary user interruptions from false positives while ensuring real concerns are surfaced.
+
+**Response Confidence Scoring:**
+
+Each Claude response is analyzed for confidence indicators to help decide when to proceed vs. ask for user guidance:
+
+| Score | Range | Indicators | Action |
+|-------|-------|------------|--------|
+| High | 80-100 | Clear markers, specific file paths, concrete actions | Proceed automatically |
+| Medium | 50-79 | Some uncertainty, hedging language, multiple options | Proceed with monitoring |
+| Low | 0-49 | Vague responses, "I'm not sure", asking clarifying questions | Pause for user input |
+
+**Confidence Extraction:**
+```typescript
+interface ResponseAnalysis {
+  confidenceScore: number;        // 0-100
+  exitSignal: string | null;      // COMPLETE, BLOCKED, etc.
+  workType: 'IMPLEMENTATION' | 'TESTING' | 'REFACTORING';
+  filesModified: number;
+  hasErrors: boolean;
+  markers: ParsedMarker[];
+}
+```
+
+**Confidence Factors:**
+- Presence of structured markers (+20)
+- Specific file paths mentioned (+15)
+- Concrete code changes described (+15)
+- Hedging language detected (-20): "might", "perhaps", "not sure"
+- Questions without `[DECISION_NEEDED]` marker (-30)
+- Empty or very short response (-40)
+
+Low confidence responses trigger HALF_OPEN circuit breaker state for user review.
 
 ### Prompt Building by Stage
 
@@ -1732,6 +1944,61 @@ Before starting a session, the server validates the project path:
 
 All checks must pass before session creation. Errors shown in UI with remediation steps.
 
+### Input Validation & Sanitization
+
+All user inputs are validated before processing:
+
+| Input | Validation Rules | Sanitization |
+|-------|------------------|--------------|
+| **Feature Title** | 1-200 chars, non-empty | Trim whitespace, escape HTML |
+| **Description** | 1-10000 chars | Trim whitespace, escape HTML |
+| **Project Path** | Absolute path, exists, is git repo | Resolve symlinks, normalize separators |
+| **Acceptance Criteria** | Array, each item 1-500 chars | Trim whitespace per item |
+| **Affected Files** | Array of valid relative paths | Normalize path separators |
+| **Technical Notes** | 0-5000 chars | Trim whitespace |
+| **Branch Name** | Valid git branch name pattern | Remove invalid chars, lowercase |
+
+**Validation Approach:**
+- Server-side validation is authoritative (never trust client)
+- Client-side validation for immediate feedback
+- Invalid inputs return 400 with specific error messages
+- Logged for debugging (without sensitive data)
+
+**Tool Whitelist Validation:**
+
+When building Claude CLI commands, allowed tools are validated against a whitelist:
+```
+VALID_TOOLS = [
+  "Read", "Write", "Edit", "Glob", "Grep", "Task",
+  "Bash", "Bash(git:*)", "Bash(gh:*)", "Bash(git:diff*)"
+]
+```
+
+Invalid tools are rejected before Claude is spawned.
+
+**Shell Injection Prevention:**
+
+Claude CLI commands are built using array-based construction to prevent shell injection:
+
+```typescript
+// SAFE: Array-based command building
+const args: string[] = ['claude'];
+args.push('-p', userPrompt);           // Safe: userPrompt is an argument, not shell-interpreted
+args.push('--output-format', 'json');
+args.push('--allowedTools', tools.join(','));
+
+spawn(args[0], args.slice(1));         // No shell metacharacter interpretation
+
+// UNSAFE: String concatenation (never do this)
+// exec(`claude -p "${userPrompt}"`);  // Vulnerable to injection
+```
+
+Key practices:
+- Never use `exec()` with string concatenation
+- Use `spawn()` with argument arrays
+- JSON values escaped via `JSON.stringify()` or `jq --arg`
+- User inputs never interpolated into shell commands
+
 ### Branch Strategy
 
 | Setting | Description | Default |
@@ -1799,11 +2066,11 @@ If user chooses Option A, the new session includes a summary of uncommitted chan
 | **Resume** | Reopen session view, continue from current stage |
 | **Pause** | Mark as paused, preserve state, stop Claude process |
 | **Archive** | Hide from default list view (can be shown via filter) |
-| **Delete** | Hide permanently (data preserved in DB, never hard deleted) |
+| **Delete** | Hide permanently (data preserved in JSON files, never hard deleted) |
 | **Rollback** | Reset to `base_commit_sha`, mark session as rolled back |
 | **View PR** | Open PR URL in browser |
 
-**Note:** Neither Archive nor Delete actually removes data from the database. Sessions are soft-deleted for audit purposes.
+**Note:** Neither Archive nor Delete actually removes session JSON files. Sessions are soft-deleted for audit purposes.
 
 ### Plan Editing
 
@@ -1818,7 +2085,7 @@ Plans can **only be modified through Claude**, not directly by user:
 
 | Requirement | Minimum | Notes |
 |-------------|---------|-------|
-| Claude Code CLI | v1.0.0+ | Required for `--continue` flag |
+| Claude Code CLI | v1.0.0+ | Required for `--resume` and `--output-format json` flags |
 | Node.js | v18+ | For server |
 | GitHub CLI (`gh`) | v2.0+ | For PR creation |
 
@@ -1832,6 +2099,9 @@ Version checked at startup; warning shown if incompatible.
 | `HOST` | 0.0.0.0 | Server host (all interfaces for network access) |
 | `DATA_DIR` | ~/.clrke | JSON file storage directory |
 | `LOG_DIR` | ./logs | Log files directory |
+| `LOG_MAX_SIZE_MB` | 50 | Max size per log file before rotation |
+| `LOG_MAX_FILES` | 10 | Number of rotated files to keep |
+| `LOG_RETENTION_DAYS` | 30 | Days to keep old logs |
 | `DEBUG` | false | Enable verbose debug logging |
 | `MAX_CALLS_PER_HOUR` | 100 | Rate limit for Claude spawns |
 | `CLAUDE_TIMEOUT_MINUTES` | 15 | Timeout for single Claude execution |
@@ -1935,7 +2205,77 @@ claude-code-web/
 │       └── EventStore.ts
 ├── shared/
 │   └── types/
+├── tests/
+│   ├── unit/
+│   │   ├── OutputParser.test.ts
+│   │   ├── SessionManager.test.ts
+│   │   └── CircuitBreaker.test.ts
+│   ├── integration/
+│   │   ├── session-workflow.test.ts
+│   │   └── claude-orchestrator.test.ts
+│   └── helpers/
+│       └── mocks.ts
 └── package.json
+```
+
+## Testing Strategy
+
+### Test Framework
+
+| Layer | Framework | Purpose |
+|-------|-----------|---------|
+| Unit tests | Jest | Service logic, parsing, validation |
+| Integration tests | Jest + Supertest | API endpoints, WebSocket events |
+| E2E tests | Playwright | Full workflow UI testing |
+
+### Test Coverage Targets
+
+| Component | Coverage | Rationale |
+|-----------|----------|-----------|
+| OutputParser | 95%+ | Critical for reliability |
+| SessionManager | 90%+ | Core business logic |
+| CircuitBreaker | 95%+ | Safety-critical |
+| API routes | 80%+ | Request/response validation |
+| React components | 70%+ | UI behavior |
+
+### Mocking Strategy
+
+**Claude CLI Mocking:**
+```typescript
+// tests/helpers/mocks.ts
+export const mockClaudeSuccess = {
+  result: "Mock response with [PLAN_STEP]...",
+  sessionId: "test-session-id",
+  costUSD: 0.01,
+  isError: false
+};
+
+export const mockClaudeError = {
+  result: "",
+  isError: true,
+  error: "API limit reached"
+};
+```
+
+**File System Mocking:**
+- Use `memfs` for in-memory file system during tests
+- Avoids polluting `~/.clrke/` with test data
+- Faster execution, no cleanup needed
+
+### Test Commands
+
+```bash
+# Run all tests
+npm test
+
+# Run with coverage
+npm run test:coverage
+
+# Run specific test file
+npm test -- OutputParser.test.ts
+
+# Watch mode
+npm run test:watch
 ```
 
 ## Getting Started
