@@ -1102,7 +1102,8 @@ flowchart LR
         X["pr.created"]
         Y["pr.review_started"]
         Z["pr.issue_found"]
-        AA["pr.approved"]
+        AA["pr.replanning_triggered"]
+        AB2["pr.approved"]
     end
 
     subgraph CIEvents["CI Status"]
