@@ -93,13 +93,12 @@ flowchart TB
         PAUSE --> ASKUSER["Present blocker to user"]
         ASKUSER --> GUIDANCE["User provides guidance"]
         GUIDANCE --> Q
-        BLOCK -->|No| COLLECT["Collect non-critical items"]
-        COLLECT --> R{"Checkpoint reached?"}
-        R -->|Yes| R2{"Items collected?"}
+        BLOCK -->|No| SC["[STEP_COMPLETE]"]
+        SC --> COLLECT["Collect & validate<br/>TODO/FIXME comments"]
+        COLLECT --> R2{"Validated items?"}
         R2 -->|Yes| TODO["Return to Stage 2"]
         TODO --> G
-        R2 -->|No| X
-        R -->|No| X{"More steps?"}
+        R2 -->|No| X{"More steps?"}
         X -->|Yes| Q
         X -->|No| Z2["Implementation complete"]
     end
@@ -284,16 +283,13 @@ Each review iteration checks for:
 | Situation | Handling | Example |
 |-----------|----------|---------|
 | **Critical Blocker** | Pause immediately, present as `[DECISION_NEEDED priority="1"]` | "Cannot find required API endpoint - need clarification" |
-| **Non-Critical Unknown** | Collect, continue to checkpoint | "Edge case for empty input - should validate?" |
+| **Non-Critical Unknown** | Collect, continue to `[STEP_COMPLETE]` | "Edge case for empty input - should validate?" |
 | **Discovered Dependency** | Collect, add to plan in review | "Need auth middleware - not in original plan" |
 | **Scope Expansion** | Collect, reassess in review | "This feature needs 3 more components than planned" |
 
 **Critical blockers** are presented immediately as `[DECISION_NEEDED priority="1" category="blocker"]` with options for how to proceed. Claude pauses until the user responds.
 
-**Non-critical items** are collected and presented at the next checkpoint, triggering a return to Plan Review. This allows:
-- Batching related decisions together
-- Reassessing the full plan with new information
-- Proper sizing of discovered work (may be larger than original feature)
+**Non-critical items** are handled via code comments - see [Comment-Based Collection](#comment-based-collection-llm-post-processing) below.
 
 ### Comment-Based Collection (LLM Post-Processing)
 
@@ -353,14 +349,18 @@ Claude writes multi-line comments with full context, using language-appropriate 
 flowchart LR
     A["Claude adds<br/>comprehensive comment"] --> B["[STEP_COMPLETE]"]
     B --> C["Server diffs<br/>modified files"]
-    C --> D["Haiku parses<br/>options & priority"]
-    D --> E["Present to user<br/>with pre-filled options"]
+    C --> D["Haiku parses<br/>& validates"]
+    D --> E{"Items found?"}
+    E -->|Yes| F["Return to<br/>Plan Review"]
+    E -->|No| G["Continue to<br/>next step"]
 ```
 
 **After each `[STEP_COMPLETE]`, the server:**
 1. Diffs modified files to find new TODO/FIXME/DEPENDENCY comment blocks
 2. Haiku parses each block to extract options and recommendation
-3. Presents to user as decision form with options pre-filled from comment
+3. Haiku validates items are legitimate concerns (filters false positives)
+4. If validated items exist → return to Plan Review (Stage 2) for user decisions
+5. If no items → continue to next implementation step
 
 **Initial Scan (Session Start):**
 - Ignores: `node_modules/`, `.git/`, `dist/`, `build/`, `vendor/`
@@ -442,18 +442,13 @@ flowchart LR
 - States: CLOSED (normal) → HALF_OPEN (monitoring) → OPEN (halted)
 - Requires user intervention to reset when OPEN
 - Prevents runaway token consumption
-- Test-only detection prevents Claude from getting stuck in test loops
+- See [Exit Detection](#exit-detection--rolling-window) for signal tracking
 
 **Output Length Tracking:**
 
-The server tracks output length across spawns to detect declining engagement:
+The server tracks output length in `status.json` to detect declining engagement:
 
-```
-~/.clrke/<project_id>/<feature_id>/.last_output_length
-```
-
-- Stores character count of previous Claude response
-- Compares current output length to previous
+- `lastOutputLength` stores character count of previous Claude response
 - 70%+ reduction triggers HALF_OPEN state (possible stagnation)
 - Helps detect when Claude is "giving up" or losing focus
 
@@ -491,6 +486,29 @@ History is useful for:
 - Post-session analysis of stalls
 - Tuning circuit breaker thresholds
 - Identifying patterns in Claude behavior
+
+**Exit Detection & Rolling Window:**
+
+The server tracks exit signals in `status.json` across a rolling window of the last 5 spawns:
+
+| Signal | Tracked When | Exit Condition |
+|--------|--------------|----------------|
+| `testOnlySpawns` | `work_type: TESTING` only | 3+ in rolling window |
+| `completionSignals` | Keywords: "done", "complete", "finished" | 2+ in rolling window |
+| `noProgressSpawns` | No file modifications | 3+ in rolling window |
+
+**Exit Evaluation:**
+```typescript
+function shouldExit(status: SessionStatus): boolean {
+  return (
+    status.exitSignals.testOnlySpawns.length >= 3 ||
+    status.exitSignals.completionSignals.length >= 2 ||
+    status.exitSignals.noProgressSpawns.length >= 3
+  );
+}
+```
+
+When exit conditions met with high confidence (80+), auto-transition to Stage 4.
 
 ### Implementation Status Protocol
 
@@ -718,7 +736,8 @@ Session data is stored as JSON files in `~/.clrke/` directory, organized by proj
 │       ├── pr.json                   # Pull request info + reviews
 │       ├── events.json               # Audit log (separate, can grow large)
 │       ├── status.json               # Live execution status (updated frequently)
-│       └── progress.json             # Real-time progress during Claude execution
+│       ├── progress.json             # Real-time progress during Claude execution
+│       └── .circuit_breaker_history  # Circuit breaker state transitions (hidden)
 ```
 
 ### File Organization
@@ -733,8 +752,9 @@ Session data is stored as JSON files in `~/.clrke/` directory, organized by proj
 | `reviews.json` | Review iteration findings |
 | `pr.json` | Pull request info and review comments |
 | `events.json` | Audit log of all session events |
-| `status.json` | Live execution status for UI updates |
+| `status.json` | Live execution status, exit signals, circuit breaker state |
 | `progress.json` | Real-time progress during Claude execution |
+| `.circuit_breaker_history` | Circuit breaker state transitions for debugging |
 
 ### File Formats
 
@@ -929,6 +949,12 @@ Updated frequently during execution for UI state:
   "maxCallsPerHour": 100,
   "nextHourReset": "2026-01-10T15:00:00Z",
   "circuitBreakerState": "CLOSED",
+  "lastOutputLength": 4523,
+  "exitSignals": {
+    "testOnlySpawns": [4, 5],
+    "completionSignals": [],
+    "noProgressSpawns": [3]
+  },
   "lastAction": "executing_step",
   "lastActionAt": "2026-01-10T14:29:55Z"
 }
@@ -1004,6 +1030,10 @@ function isValidJson(filePath: string): boolean {
 |------|-----------------|
 | `session.json` | Restore from `.bak` if valid; otherwise mark session as corrupted |
 | `plan.json` | Restore from `plan-history/` latest version |
+| `questions.json` | Restore from `.bak`; if invalid, start fresh (questions can be re-asked) |
+| `todos.json` | Restore from `.bak`; if invalid, re-scan codebase for comments |
+| `reviews.json` | Restore from `.bak`; if invalid, start fresh (log warning) |
+| `pr.json` | Restore from `.bak`; if invalid, fetch from GitHub API via `gh pr view` |
 | `status.json` | Recreate with default values (non-critical) |
 | `progress.json` | Recreate empty (transient data) |
 | `events.json` | Restore from `.bak`; if invalid, start fresh (log warning) |
@@ -1072,6 +1102,13 @@ flowchart LR
         Z["pr.issue_found"]
         AA["pr.approved"]
     end
+
+    subgraph CIEvents["CI Status"]
+        CI1["ci.polling_started"]
+        CI2["ci.check_updated"]
+        CI3["ci.all_passed"]
+        CI4["ci.failed"]
+    end
 ```
 
 ### Event Payloads
@@ -1093,6 +1130,10 @@ flowchart LR
 | `todo.replanning_triggered` | `{ sessionId, collectedItems[], returnToStage: 2 }` |
 | `pr.created` | `{ sessionId, prNumber, prUrl, title }` |
 | `pr.issue_found` | `{ prId, issue, severity, suggestion }` |
+| `ci.polling_started` | `{ sessionId, prNumber, checkCount }` |
+| `ci.check_updated` | `{ sessionId, checkName, status, conclusion }` |
+| `ci.all_passed` | `{ sessionId, prNumber, checksCompleted }` |
+| `ci.failed` | `{ sessionId, prNumber, failedChecks[], logs }` |
 
 ### WebSocket Reliability
 
@@ -1179,7 +1220,7 @@ sequenceDiagram
 | Stage 2: Plan Review | `Read,Glob,Grep,Task` | Normal | Read-only review and analysis |
 | Stage 3: Implementation | `Read,Write,Edit,Bash,Glob,Grep,Task` | `--dangerously-skip-permissions` | Full access for uninterrupted implementation |
 | Stage 4: PR Creation | `Read,Bash(git:*),Bash(gh:*)` | Normal | Git operations and PR creation only |
-| Stage 5: PR Review | `Read,Glob,Grep,Task,Bash(git:diff*)` | Normal | Read-only review with diff access |
+| Stage 5: PR Review | `Read,Glob,Grep,Task,Bash(git:diff*),Bash(gh:pr*)` | Normal | Read-only review with diff and CI status access |
 
 **Stage 3 Permission Bypass:**
 
@@ -1340,9 +1381,36 @@ When completing a step:
 Summary of what was done.
 [/STEP_COMPLETE]
 
+When implementation finishes:
+[IMPLEMENTATION_COMPLETE]
+Summary of all changes made.
+[/IMPLEMENTATION_COMPLETE]
+
 Plan mode state changes:
 [PLAN_MODE_ENTERED]
 [PLAN_MODE_EXITED]
+
+PR creation (Stage 4):
+[PR_CREATED]
+Title: {{prTitle}}
+Branch: {{featureBranch}} → {{baseBranch}}
+[/PR_CREATED]
+
+PR review batching (Stage 5):
+[REVIEW_CHECKPOINT]
+## Review Findings
+(Multiple [DECISION_NEEDED] blocks)
+[/REVIEW_CHECKPOINT]
+
+CI status (Stage 5):
+[CI_STATUS status="passing|failing|pending"]
+{{checkResults}}
+[/CI_STATUS]
+
+PR approval (Stage 5):
+[PR_APPROVED]
+The PR is ready to merge.
+[/PR_APPROVED]
 ```
 
 **2. LLM Fallback** - When markers aren't present, use Haiku to parse:
@@ -1421,16 +1489,6 @@ When in doubt, mark as valid to surface for user review.
 ```
 
 This prevents unnecessary user interruptions from false positives while ensuring real concerns are surfaced.
-
-**Comment-Based Collection (LLM Post-Processing):**
-
-After each `[STEP_COMPLETE]`, implementation items are collected from code comments:
-
-1. Diff modified files for `// TODO:`, `// FIXME:`, `// DEPENDENCY:` comments
-2. Haiku extracts context, options, and recommendations
-3. Present to user with decision options
-
-See [Comment-Based Collection](#comment-based-collection-llm-post-processing) for full details.
 
 **Response Confidence Scoring:**
 
@@ -1716,6 +1774,7 @@ Description: {{prDescription}}
    - Backend Agent: Review API changes
    - Database Agent: Review schema changes
    - Test Agent: Review test coverage
+   - CI Agent: Check CI status (see step 6)
 
 2. Review for:
    - Correctness: Does the code do what it's supposed to?
@@ -1763,9 +1822,26 @@ Would you like to address this?
    - Priority 2: Major issues - should be resolved or justified
    - Priority 3: Suggestions - optional improvements
 
-5. After user resolves all priority 1 and 2 decisions:
+5. After user resolves all priority 1 and 2 decisions, check CI status.
+
+6. Spawn CI Agent to poll GitHub Actions status:
+   ```bash
+   # CI Agent polls until checks complete
+   gh pr checks {{prNumber}} --watch
+   ```
+
+   CI Agent behavior:
+   - Poll every 30 seconds until all checks complete
+   - If checks pass: proceed to PR_APPROVED
+   - If checks fail: present failures as [DECISION_NEEDED] with fix options
+
+   [CI_STATUS status="passing|failing|pending"]
+   {{checkResults}}
+   [/CI_STATUS]
+
+7. When CI passes and all issues resolved:
 [PR_APPROVED]
-The PR is ready to merge.
+The PR is ready to merge. All CI checks passing.
 [/PR_APPROVED]
 ```
 
@@ -1940,6 +2016,7 @@ When prompting Claude Code, instruct it to spawn these specialized subagents:
 | **Database Agent** | SQL, ORMs, migrations | Schema analysis, query review, migration planning |
 | **DevOps Agent** | CI/CD, Docker, infra | Pipeline review, deployment analysis, config checks |
 | **Test Agent** | Jest, Playwright, testing patterns | Test coverage analysis, test strategy review |
+| **CI Agent** | GitHub Actions, CI status | Poll CI status, wait for checks to complete (Stage 5) |
 
 ### Usage by Workflow Stage
 
@@ -1948,7 +2025,8 @@ When prompting Claude Code, instruct it to spawn these specialized subagents:
 | **Discovery** | Spawn agents in parallel to explore codebase from different domain perspectives |
 | **Plan Review** | Each agent reviews plan for issues in their domain |
 | **Implementation** | Main Claude implements; spawns agents for read-only guidance when needed |
-| **PR Review** | Each agent reviews changes from their specialty lens |
+| **PR Creation** | Spawn agents to review changes before PR |
+| **PR Review** | Domain agents review changes; CI Agent polls for check status |
 | **After /compact** | Re-explore relevant files to restore context for current stage |
 
 ### Prompt Template
@@ -1967,6 +2045,8 @@ subagents for parallel analysis:
 Subagents should focus on read-only exploration and analysis.
 Implementation is handled by the main Claude instance.
 ```
+
+**Stage 5 addition:** CI Agent is spawned to poll GitHub Actions status via `gh pr checks --watch`. See [Stage 5 prompt](#stage-5-pr-review) for details.
 
 ### Subagent Failure Handling
 
@@ -2083,7 +2163,7 @@ When building Claude CLI commands, allowed tools are validated against a whiteli
 ```
 VALID_TOOLS = [
   "Read", "Write", "Edit", "Glob", "Grep", "Task",
-  "Bash", "Bash(git:*)", "Bash(gh:*)", "Bash(git:diff*)"
+  "Bash", "Bash(git:*)", "Bash(gh:*)", "Bash(git:diff*)", "Bash(gh:pr*)"
 ]
 ```
 
