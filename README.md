@@ -19,6 +19,7 @@ When starting a new session, users fill out a structured template:
 | Field | Required | Description |
 |-------|----------|-------------|
 | **Title** | Yes | Short, descriptive name for the feature |
+| **Project Path** | Yes | Absolute path to the project/codebase |
 | **Description** | Yes | Detailed explanation of what the feature should do |
 | **Acceptance Criteria** | Yes | Bullet list of conditions that must be met |
 | **Affected Files** | No | Known files that will likely need changes |
@@ -175,6 +176,8 @@ flowchart TB
 
 ### Visual Plan Editor
 
+The plan editor is **read-only** - users view the plan but request changes through Claude.
+
 ```mermaid
 flowchart TB
     subgraph PlanEditor["Visual Plan Editor"]
@@ -184,12 +187,10 @@ flowchart TB
             Timeline["Timeline View<br/>(sequence)"]
         end
 
-        subgraph Actions["Plan Actions"]
-            Drag["Drag to reorder"]
-            Edit["Inline editing"]
-            Add["Add step"]
-            Delete["Remove step"]
+        subgraph Actions["Plan Actions (Read-Only)"]
             Expand["Expand/collapse"]
+            Select["Select step to discuss"]
+            Comment["Request change via Claude"]
         end
 
         subgraph Status["Step Status"]
@@ -201,6 +202,8 @@ flowchart TB
         end
     end
 ```
+
+To modify the plan, users select a step and describe the change. Claude validates and applies it, maintaining consistency between plan and implementation.
 
 ### Structured Question Forms
 
@@ -299,7 +302,16 @@ flowchart TB
 |------|-------------|----------|
 | **Blocker** | Cannot proceed without resolution | Pauses execution, enters plan mode |
 | **Non-blocker** | Can continue, but needs addressing | Adds TODO comment + kanban card |
-| **Deferred** | User explicitly defers | Moves to backlog, doesn't block PR |
+| **Deferred** | User explicitly defers | Doesn't block PR, stays as TODO in code |
+
+### TODO Discovery
+
+TODOs are discovered from two sources:
+
+1. **Runtime detection** - Claude encounters unknowns during implementation and adds TODO comments
+2. **Codebase scanning** - Automatically scan for existing `// TODO:` comments in the codebase
+
+The kanban board syncs with TODO comments in code, ensuring nothing is missed.
 
 ### Build/Test Failure Handling
 
@@ -349,6 +361,8 @@ erDiagram
         string feature_branch
         string status
         int current_stage
+        string claude_session_id
+        datetime session_expires_at
         datetime created_at
         datetime updated_at
     }
@@ -566,10 +580,98 @@ sequenceDiagram
 | Flag | Purpose |
 |------|---------|
 | `--plan` | Enter plan mode for exploration |
-| `--continue` | Resume session context |
+| `--continue` | Resume session context across spawns |
 | `--output-format json` | Structured output parsing |
 | `--allowed-tools` | Control available tools per stage |
 | `-p` | Pass prompts programmatically |
+
+### Session Continuity
+
+Session context is maintained across Claude Code spawns (like Ralph):
+
+1. **`--continue` flag** - Passed to Claude CLI to maintain conversation context
+2. **Session ID persistence** - Extracted from Claude's JSON output, stored in database
+3. **24-hour expiration** - Sessions expire after 24 hours of inactivity
+4. **Loop context** - Previous actions/state appended to help Claude understand where it left off
+
+This allows:
+- 10 review iterations without losing context
+- Pausing a session and resuming the next day
+- Switching between multiple active sessions
+
+### Context Management
+
+Context is compacted at strategic points to prevent bloat, then subagents re-gather fresh context.
+
+**When to compact:**
+
+Only compact when context becomes contradictory, misleading, or biased. Recontextualization has a cost (subagent tokens, time).
+
+| Trigger | Reason |
+|---------|--------|
+| Stage 2→3 (Plan Review → Implementation) | Reviews accumulate rejected alternatives and old plan versions |
+| Stage 3→4 (Implementation → PR Creation) | Remove recency bias - objective summary of what was done |
+| Stage 4→5 (PR Creation → PR Review) | Remove implementation bias - fresh eyes for objective review |
+| After 5+ review iterations | Old findings may reference issues that are now resolved |
+| Claude signals context pressure | Safety net before hitting limits |
+
+**When NOT to compact:**
+
+| Scenario | Reason |
+|----------|--------|
+| Resuming after idle time | Idle time doesn't make context stale or contradictory |
+
+**Recontextualization after compact:**
+
+```mermaid
+flowchart LR
+    A["/compact"] --> B["Spawn subagents"]
+    B --> C["Frontend Agent:<br/>Re-explore relevant UI files"]
+    B --> D["Backend Agent:<br/>Re-explore relevant API files"]
+    B --> E["Database Agent:<br/>Re-explore relevant schema"]
+    C --> F["Aggregated fresh context"]
+    D --> F
+    E --> F
+    F --> G["Continue with focused context"]
+```
+
+After compaction, subagents re-explore only what's relevant for the next stage:
+
+| After Compact | Subagents Re-explore |
+|---------------|---------------------|
+| Before Implementation | Approved plan, files to be modified, dependencies, test patterns |
+| Before PR Creation | Git diff, commit history, changed files, test results |
+| Before PR Review | PR description, git diff, changed files content, test results |
+| Mid-review (5+ iterations) | Current plan version, unresolved findings, relevant code sections |
+
+This ensures we never lose critical context - we just refresh it with targeted exploration.
+
+### Output Parsing (Hybrid Approach)
+
+Claude Code outputs unstructured markdown/text. We use a hybrid parsing strategy:
+
+**1. Prompt Engineering** - Instruct Claude to use markers:
+```
+When asking questions, format as:
+[QUESTION type="single_choice" required="true"]
+Which authentication method should we use?
+- JWT tokens (recommended)
+- Session cookies
+- OAuth 2.0
+[/QUESTION]
+
+When outputting plan steps, format as:
+[PLAN_STEP id="1" status="pending"]
+Create user authentication middleware
+[/PLAN_STEP]
+```
+
+**2. LLM Fallback** - When markers aren't present, use Haiku to parse:
+- Detect if Claude is asking a question
+- Extract plan steps from freeform output
+- Classify blockers vs. non-blockers
+
+This ensures reliable parsing while gracefully handling edge cases.
 
 ## UI Components
 
@@ -644,6 +746,7 @@ When prompting Claude Code, instruct it to spawn these specialized subagents:
 | **Plan Review** | Each agent reviews plan for issues in their domain |
 | **Implementation** | Main Claude implements; spawns agents for read-only guidance when needed |
 | **PR Review** | Each agent reviews changes from their specialty lens |
+| **After /compact** | Re-explore relevant files to restore context for current stage |
 
 ### Prompt Template
 
@@ -667,6 +770,25 @@ Implementation is handled by the main Claude instance.
 **Claude Code is the orchestrator.** The web app doesn't manage subagents - it just prompts Claude Code with guidance on when and how to use its built-in Task tool for spawning subagents.
 
 ## Configuration
+
+### Authentication
+
+**Web Interface**: Single-user, no authentication (v1). Runs on localhost only.
+
+**GitHub**: Uses local `gh` CLI authentication. User must have `gh auth login` configured on the machine where the server runs.
+
+### Notifications
+
+Desktop notifications (via node-notifier) are sent for:
+
+| Event | Notification |
+|-------|--------------|
+| Stage transition | "Moved to Stage 2: Plan Review" |
+| Questions ready | "Claude has 3 questions for you" |
+| Blocker encountered | "Implementation paused - input needed" |
+| PR created | "PR #42 created: Add user auth" |
+| PR merged | "PR #42 merged to main" |
+| Review complete | "Review iteration 5/10 complete" |
 
 ### Branch Strategy
 
@@ -733,7 +855,7 @@ claude-code-web/
 │   │   │   │   ├── TreeView.tsx
 │   │   │   │   ├── KanbanView.tsx
 │   │   │   │   ├── StepCard.tsx
-│   │   │   │   └── DragHandle.tsx
+│   │   │   │   └── ChangeRequestForm.tsx
 │   │   │   ├── QuestionForms/
 │   │   │   │   ├── QuestionForm.tsx
 │   │   │   │   ├── SingleChoice.tsx
@@ -788,11 +910,15 @@ claude-code-web/
 │   │   │   ├── PlanService.ts
 │   │   │   ├── QuestionParser.ts
 │   │   │   ├── TodoService.ts
-│   │   │   └── ReviewService.ts
+│   │   │   ├── TodoScanner.ts
+│   │   │   ├── ReviewService.ts
+│   │   │   ├── OutputParser.ts
+│   │   │   ├── HaikuFallback.ts
+│   │   │   └── NotificationService.ts
 │   │   ├── websocket/
 │   │   │   └── handlers.ts
 │   │   └── utils/
-│   │       └── outputParser.ts
+│   │       └── markers.ts
 │   └── db/
 ├── shared/
 │   └── types/
