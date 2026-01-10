@@ -124,13 +124,32 @@ export function createApp(storage: FileStorageService, sessionManager: SessionMa
         projectPath: session.projectPath,
         allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
       }).then(async (result) => {
+        const sessionDir = `${session.projectId}/${session.featureId}`;
+        const now = new Date().toISOString();
+
+        // Save conversation output
+        const conversationPath = `${sessionDir}/conversations.json`;
+        const conversations = await storage.readJson<{ entries: Array<Record<string, unknown>> }>(conversationPath) || { entries: [] };
+        conversations.entries.push({
+          stage: 1,
+          timestamp: now,
+          prompt,
+          output: result.output,
+          sessionId: result.sessionId,
+          costUsd: result.costUsd,
+          isError: result.isError,
+          error: result.error,
+          parsed: result.parsed,
+        });
+        await storage.writeJson(conversationPath, conversations);
+
         // Update status with result
         const updatedStatus = await storage.readJson<Record<string, unknown>>(statusPath);
         if (updatedStatus) {
           updatedStatus.status = result.isError ? 'error' : 'idle';
           updatedStatus.claudeSpawnCount = ((updatedStatus.claudeSpawnCount as number) || 0) + 1;
           updatedStatus.lastAction = result.isError ? 'stage1_error' : 'stage1_complete';
-          updatedStatus.lastActionAt = new Date().toISOString();
+          updatedStatus.lastActionAt = now;
           updatedStatus.lastOutputLength = result.output.length;
           if (result.sessionId) {
             await sessionManager.updateSession(session.projectId, session.featureId, {
