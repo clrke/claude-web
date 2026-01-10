@@ -673,6 +673,234 @@ Create user authentication middleware
 
 This ensures reliable parsing while gracefully handling edge cases.
 
+### Prompt Building by Stage
+
+Each stage uses a tailored prompt with output format instructions, subagent guidance, and stage-specific context.
+
+#### Stage 1: Feature Discovery
+
+```
+You are helping implement a new feature. Study the codebase and ask clarifying questions.
+
+## Feature
+Title: {{title}}
+Description: {{description}}
+Project Path: {{projectPath}}
+
+## Acceptance Criteria
+{{acceptanceCriteria}}
+
+## Instructions
+1. Use the Task tool to spawn domain-specific subagents for parallel codebase exploration:
+   - Frontend Agent: UI components, React patterns, styling
+   - Backend Agent: API endpoints, business logic, middleware
+   - Database Agent: Schema design, queries, data modeling
+   - Test Agent: Test coverage, testing strategies
+
+2. Based on exploration, ask clarifying questions to understand requirements.
+
+3. Format questions as:
+[QUESTION type="single_choice|multi_choice|text" required="true|false"]
+Your question here?
+- Option 1 (recommended)
+- Option 2
+- Option 3
+[/QUESTION]
+
+4. After all questions are answered, generate an implementation plan.
+
+5. Format plan steps as:
+[PLAN_STEP id="1" parent="null" status="pending"]
+Step title here
+Description of what this step accomplishes.
+[/PLAN_STEP]
+```
+
+#### Stage 2: Plan Review
+
+```
+You are reviewing an implementation plan. Find issues and suggest improvements.
+
+## Current Plan (v{{version}})
+{{planSteps}}
+
+## Review Iteration
+This is review {{currentIteration}} of {{targetIterations}} recommended.
+
+## Instructions
+1. Use the Task tool to spawn domain-specific subagents for parallel review:
+   - Frontend Agent: Review UI-related steps
+   - Backend Agent: Review API-related steps
+   - Database Agent: Review data-related steps
+   - Test Agent: Review test coverage
+
+2. Check for issues in these categories:
+   - Code Quality: Missing error handling, hardcoded values, missing tests
+   - Architecture: Tight coupling, unclear separation of concerns
+   - Security: Injection risks, exposed secrets, missing auth checks
+   - Performance: N+1 queries, missing indexes, large bundle size
+
+3. Format findings as:
+[FINDING category="code_quality|architecture|security|performance" severity="high|medium|low"]
+Issue description here.
+Suggestion: How to fix it.
+[/FINDING]
+
+4. If plan is ready, output:
+[PLAN_APPROVED]
+```
+
+#### Stage 3: Implementation
+
+```
+You are implementing an approved plan. Execute each step carefully.
+
+## Approved Plan
+{{planSteps}}
+
+## Project Path
+{{projectPath}}
+
+## Instructions
+1. Execute plan steps in order. After each step, output:
+[STEP_COMPLETE id="{{stepId}}"]
+Summary of what was done.
+[/STEP_COMPLETE]
+
+2. If you encounter an unknown that BLOCKS progress:
+[BLOCKER]
+Description of what's blocking you.
+[QUESTION type="text" required="true"]
+What you need to know to proceed?
+[/QUESTION]
+[/BLOCKER]
+
+3. If you encounter a non-blocking unknown, add a TODO and continue:
+[TODO type="non_blocker" file="path/to/file.ts" line="42"]
+Description of what needs to be addressed later.
+[/TODO]
+
+4. Run tests after implementation. If tests fail, attempt to fix (max 3 attempts).
+
+5. When all steps complete:
+[IMPLEMENTATION_COMPLETE]
+Summary of all changes made.
+[/IMPLEMENTATION_COMPLETE]
+```
+
+#### Stage 4: PR Creation
+
+After compact, recontextualized with: git diff, commit history, changed files, test results.
+
+```
+You are creating a pull request for completed implementation.
+
+## Context (from recontextualization)
+### Git Diff Summary
+{{gitDiffSummary}}
+
+### Changed Files
+{{changedFiles}}
+
+### Test Results
+{{testResults}}
+
+## Instructions
+1. Use the Task tool to spawn subagents to review changes from different perspectives.
+
+2. Create a pull request with:
+   - Clear, descriptive title
+   - Summary of changes (what and why)
+   - Test plan for reviewers
+
+3. Output PR details as:
+[PR_CREATED]
+Title: {{prTitle}}
+Branch: {{featureBranch}} → {{baseBranch}}
+
+## Summary
+{{summary}}
+
+## Test Plan
+{{testPlan}}
+[/PR_CREATED]
+
+4. Use `gh pr create` to create the actual PR.
+```
+
+#### Stage 5: PR Review
+
+After compact, recontextualized with: PR description, git diff, changed files content, test results.
+
+```
+You are reviewing a pull request. Be objective and thorough.
+
+IMPORTANT: You are reviewing this code with fresh eyes. Evaluate it as if you did not write it.
+
+## PR Details
+Title: {{prTitle}}
+Description: {{prDescription}}
+
+## Context (from recontextualization)
+### Git Diff
+{{gitDiff}}
+
+### Changed Files Content
+{{changedFilesContent}}
+
+### Test Results
+{{testResults}}
+
+## Instructions
+1. Use the Task tool to spawn domain-specific subagents for parallel review:
+   - Frontend Agent: Review UI changes
+   - Backend Agent: Review API changes
+   - Database Agent: Review schema changes
+   - Test Agent: Review test coverage
+
+2. Review for:
+   - Correctness: Does the code do what it's supposed to?
+   - Edge cases: Are boundary conditions handled?
+   - Error handling: Are failures handled gracefully?
+   - Security: Any vulnerabilities introduced?
+   - Performance: Any obvious bottlenecks?
+   - Tests: Is coverage adequate?
+
+3. Format issues as:
+[PR_ISSUE severity="critical|major|minor|suggestion" file="path/to/file.ts" line="42"]
+Issue description.
+Suggestion: How to fix.
+[/PR_ISSUE]
+
+4. If no issues found:
+[PR_APPROVED]
+The PR looks good. Ready to merge.
+[/PR_APPROVED]
+```
+
+#### Recontextualization Prompt (After Compact)
+
+```
+Context was compacted. Use subagents to re-gather relevant context.
+
+## Current Stage
+{{currentStage}}
+
+## What to Re-explore
+{{recontextualizationTargets}}
+
+## Instructions
+1. Spawn domain-specific subagents to explore in parallel.
+2. Each agent should return a concise summary of relevant findings.
+3. Aggregate findings and continue with the stage-specific task.
+
+Use the Task tool with these agents:
+- Frontend Agent: {{frontendTargets}}
+- Backend Agent: {{backendTargets}}
+- Database Agent: {{databaseTargets}}
+- Test Agent: {{testTargets}}
+```
+
 ## UI Components
 
 ### Session View
