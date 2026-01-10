@@ -295,17 +295,104 @@ Each review iteration checks for:
 - Reassessing the full plan with new information
 - Proper sizing of discovered work (may be larger than original feature)
 
-### TODO Discovery (Initial Scan)
+### Comment-Based Collection (LLM Post-Processing)
 
-Existing TODOs are scanned at session start:
+Implementation items are collected via comprehensive code comments that include options and recommendations.
 
-**Scanning Rules:**
+**Comment Format:**
+
+Claude writes multi-line comments with full context, using language-appropriate syntax:
+
+**JavaScript/TypeScript (block comment):**
+```typescript
+/**
+ * TODO: Add rate limiting before production
+ * Impact: Security - prevents brute force attacks on login endpoint
+ * Options: (A) express-rate-limit package [recommended] (B) Custom middleware (C) Redis-based
+ * Priority: High
+ */
+```
+
+**Python/Ruby/Shell (hash comments):**
+```python
+# TODO: Add rate limiting before production
+# Impact: Security - prevents brute force attacks on login endpoint
+# Options: (A) flask-limiter [recommended] (B) Custom decorator (C) Redis-based
+# Priority: High
+```
+
+**Go/Rust/Java (line comments):**
+```go
+// TODO: Add rate limiting before production
+// Impact: Security - prevents brute force attacks on login endpoint
+// Options: (A) golang.org/x/time/rate [recommended] (B) Custom middleware
+// Priority: High
+```
+
+**Comment Structure:**
+
+| Line | Purpose |
+|------|---------|
+| First line | `TODO/FIXME/DEPENDENCY:` + description |
+| `Impact:` | Category and consequence if not addressed |
+| `Options:` | (A) Option [recommended] (B) Option (C) Option |
+| `Priority:` | High, Medium, or Low |
+
+**Supported Comment Patterns:**
+
+| Language | Single-line | Multi-line |
+|----------|-------------|------------|
+| JS/TS/Java/Go/Rust/C | `//` | `/** */` |
+| Python/Ruby/Shell/YAML | `#` | (multiple `#` lines) |
+| CSS | | `/* */` |
+| HTML/XML | | `<!-- -->` |
+
+**Collection Flow:**
+
+```mermaid
+flowchart LR
+    A["Claude adds<br/>comprehensive comment"] --> B["[STEP_COMPLETE]"]
+    B --> C["Server diffs<br/>modified files"]
+    C --> D["Haiku parses<br/>options & priority"]
+    D --> E["Present to user<br/>with pre-filled options"]
+```
+
+**After each `[STEP_COMPLETE]`, the server:**
+1. Diffs modified files to find new TODO/FIXME/DEPENDENCY comment blocks
+2. Haiku parses each block to extract options and recommendation
+3. Presents to user as decision form with options pre-filled from comment
+
+**Initial Scan (Session Start):**
 - Ignores: `node_modules/`, `.git/`, `dist/`, `build/`, `vendor/`
-- File types: `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, `.rs`, `.java`
-- Patterns: `// TODO:`, `# TODO:`, `/* TODO:`, `// FIXME:`
-- Deduplication: Same file+line = same TODO (updated, not duplicated)
+- File types: `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, `.rs`, `.java`, `.rb`, `.sh`
+- Patterns: `TODO:`, `FIXME:`, `DEPENDENCY:` (with any comment prefix)
+- Existing items shown in dashboard (don't block unless in affected files)
 
-Existing TODOs are shown in the session dashboard but don't block the workflow unless they're in affected files.
+**Haiku Extraction Prompt:**
+```
+Parse this code comment block into structured data:
+
+File: {{filePath}}
+Line: {{lineNumber}}
+Comment block:
+{{commentBlock}}
+
+Return JSON:
+{
+  "type": "todo|fixme|dependency",
+  "description": "Main description from first line",
+  "impact": "Impact description",
+  "category": "security|performance|bug|feature|missing",
+  "priority": "high|medium|low",
+  "options": [
+    {"label": "Option A description", "recommended": true},
+    {"label": "Option B description", "recommended": false},
+    {"label": "Option C description", "recommended": false}
+  ]
+}
+```
+
+**Deduplication:** Same file+line = same item (updated, not duplicated)
 
 ### Build/Test Failure Handling
 
@@ -729,22 +816,45 @@ Session data is stored as JSON files in `~/.clrke/` directory, organized by proj
 {
   "version": "1.0",
   "sessionId": "uuid-v4",
-  "todos": [
+  "items": [
     {
-      "id": "todo-uuid-1",
-      "title": "Add rate limiting",
-      "description": "Prevent brute force attacks",
+      "id": "item-uuid-1",
+      "type": "todo",
       "filePath": "src/routes/auth.ts",
       "lineNumber": 42,
-      "todoType": "discovered",
+      "rawBlock": "// TODO: Add rate limiting...\n// Impact: Security...\n// Options: ...\n// Priority: High",
+      "description": "Add rate limiting before production",
+      "impact": "Security - prevents brute force attacks on login endpoint",
+      "category": "security",
+      "priority": "high",
+      "options": [
+        {"label": "express-rate-limit package", "recommended": true},
+        {"label": "Custom middleware", "recommended": false},
+        {"label": "Defer to later", "recommended": false}
+      ],
+      "source": "implementation",
       "status": "pending",
-      "context": "Found during implementation",
+      "selectedOption": null,
+      "spawnNumber": 5,
       "createdAt": "2026-01-10T15:00:00Z",
       "resolvedAt": null
     }
   ]
 }
 ```
+
+| Field | Description |
+|-------|-------------|
+| `type` | `todo`, `fixme`, or `dependency` |
+| `rawBlock` | Full comment block from code |
+| `description` | Main description (first line) |
+| `impact` | Extracted from `// Impact:` line |
+| `category` | `security`, `performance`, `bug`, `feature`, `missing` |
+| `priority` | `high`, `medium`, `low` (from comment) |
+| `options` | Array of options with `recommended` flag |
+| `selectedOption` | User's choice (null until decided) |
+| `source` | `initial_scan` or `implementation` |
+| `spawnNumber` | Which Claude spawn discovered this |
 
 #### reviews.json
 ```json
@@ -1225,11 +1335,10 @@ When outputting plan steps, format as:
 Create user authentication middleware
 [/PLAN_STEP]
 
-When batching decisions at checkpoints:
-[CHECKPOINT step="{{stepId}}"]
-[DECISION_NEEDED ...]...[/DECISION_NEEDED]
-[DECISION_NEEDED ...]...[/DECISION_NEEDED]
-[/CHECKPOINT]
+When completing a step:
+[STEP_COMPLETE id="{{stepId}}"]
+Summary of what was done.
+[/STEP_COMPLETE]
 
 Plan mode state changes:
 [PLAN_MODE_ENTERED]
@@ -1241,11 +1350,15 @@ Plan mode state changes:
 - Extract plan steps from freeform output
 - Classify priority level of decisions
 
+**3. Comment-Based Collection** - After each `[STEP_COMPLETE]`:
+- Diff modified files for `// TODO:`, `// FIXME:`, `// DEPENDENCY:` comments
+- Haiku extracts and categorizes each item
+- Present to user for decisions (see [Comment-Based Collection](#comment-based-collection-llm-post-processing))
+
 **Marker Parsing Rules:**
 - Markers must be on their own line (not inline with other content)
 - Markers in code blocks (```) are ignored
 - Markers are case-sensitive: `[DECISION_NEEDED]` not `[decision_needed]`
-- Nested markers allowed: `[CHECKPOINT]` can contain `[DECISION_NEEDED]`
 - Incomplete markers (missing close tag) trigger Haiku fallback
 - Priority attribute determines question ordering (1 = ask first, 3 = ask last)
 
@@ -1308,6 +1421,16 @@ When in doubt, mark as valid to surface for user review.
 ```
 
 This prevents unnecessary user interruptions from false positives while ensuring real concerns are surfaced.
+
+**Comment-Based Collection (LLM Post-Processing):**
+
+After each `[STEP_COMPLETE]`, implementation items are collected from code comments:
+
+1. Diff modified files for `// TODO:`, `// FIXME:`, `// DEPENDENCY:` comments
+2. Haiku extracts context, options, and recommendations
+3. Present to user with decision options
+
+See [Comment-Based Collection](#comment-based-collection-llm-post-processing) for full details.
 
 **Response Confidence Scoring:**
 
@@ -1486,36 +1609,26 @@ How should we proceed?
 - Option C: Provide more context
 [/DECISION_NEEDED]
 
-3. For non-critical unknowns, collect them and present at checkpoints (after completing a plan step or group of related steps):
+3. For non-critical items discovered during implementation, add comprehensive comments:
 
-[CHECKPOINT step="{{stepId}}"]
-## Decisions Needed
+   ```typescript
+   // TODO: Add rate limiting before production
+   // Impact: Security - prevents brute force attacks
+   // Options: (A) express-rate-limit [recommended] (B) Custom middleware (C) Defer
+   // Priority: High
 
-[DECISION_NEEDED priority="2" category="dependency"]
-Issue: Discovered dependency not in original plan.
-Context: Need auth middleware before this API endpoint works.
+   // DEPENDENCY: Need auth middleware for this endpoint
+   // Impact: Feature incomplete - endpoint unprotected
+   // Options: (A) Import from src/middleware/auth.ts [recommended] (B) Create inline
+   // Priority: Medium
+   ```
 
-How should we proceed?
-- Option A: Add to plan and implement now (recommended)
-- Option B: Create separate task for later
-- Option C: Work around without this dependency
-[/DECISION_NEEDED]
+   Include: description, impact, options with recommendation, and priority.
 
-[DECISION_NEEDED priority="2" category="todo"]
-Issue: Non-blocking unknown discovered during implementation.
-File: path/to/file.ts:42
-
-How should we handle this?
-- Option A: Address now before continuing (recommended)
-- Option B: Add TODO comment and address later
-- Option C: Out of scope, ignore
-[/DECISION_NEEDED]
-[/CHECKPOINT]
-
-4. Present decisions progressively:
-   - Priority 1: Blockers that prevent continuation
-   - Priority 2: Important TODOs that affect quality
-   - Priority 3: Minor improvements or cleanup items
+4. After each `[STEP_COMPLETE]`, the server:
+   - Collects new comment blocks from modified files
+   - Parses options and recommendations via Haiku
+   - Presents to user with pre-filled decision form
 
 5. Run tests after implementation. If tests fail, attempt to fix (max 3 attempts).
 
