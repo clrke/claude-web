@@ -2,6 +2,9 @@ import express, { Express, Request, Response, NextFunction } from 'express';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
 import { SessionManager } from './services/SessionManager';
+import { ClaudeOrchestrator } from './services/ClaudeOrchestrator';
+import { OutputParser } from './services/OutputParser';
+import { Session } from '@claude-code-web/shared';
 import {
   CreateSessionInputSchema,
   UpdateSessionInputSchema,
@@ -12,6 +15,40 @@ import {
 import * as packageJson from '../package.json';
 
 const startTime = Date.now();
+
+// Stage 1 Discovery prompt template
+function buildStage1Prompt(session: Session): string {
+  return `You are starting Stage 1: Discovery for a feature implementation.
+
+## Feature Details
+- **Title:** ${session.title}
+- **Description:** ${session.featureDescription}
+- **Base Branch:** ${session.baseBranch}
+${session.technicalNotes ? `- **Technical Notes:** ${session.technicalNotes}` : ''}
+
+## Acceptance Criteria
+${session.acceptanceCriteria.length > 0
+    ? session.acceptanceCriteria.map((c, i) => `${i + 1}. ${c.text}`).join('\n')
+    : 'No specific criteria provided.'}
+
+## Your Task
+1. Explore the codebase to understand its structure and patterns
+2. Identify files that will likely need modification
+3. Ask clarifying questions if requirements are ambiguous
+4. Output your findings using structured markers
+
+## Output Format
+Use these markers in your response:
+- [QUESTION priority=1|2|3 type=single_choice|multi_choice|text] ... [/QUESTION]
+- [AFFECTED_FILE path="..."] reason [/AFFECTED_FILE]
+- [DISCOVERY_COMPLETE] when you have gathered enough information
+
+Begin exploring the codebase.`;
+}
+
+// Initialize orchestrator
+const outputParser = new OutputParser();
+const orchestrator = new ClaudeOrchestrator(outputParser);
 
 // Validation middleware factory
 function validate<T>(schema: ZodSchema<T>) {
@@ -60,11 +97,53 @@ export function createApp(storage: FileStorageService, sessionManager: SessionMa
 
   // API Routes
 
-  // Create session (with Zod validation)
+  // Create session (with Zod validation) - automatically starts Stage 1
   app.post('/api/sessions', validate(CreateSessionInputSchema), async (req, res) => {
     try {
       const session = await sessionManager.createSession(req.body);
+
+      // Return response immediately, then start Claude in background
       res.status(201).json(session);
+
+      // Start Stage 1 Discovery asynchronously
+      const prompt = buildStage1Prompt(session);
+      const statusPath = `${session.projectId}/${session.featureId}/status.json`;
+
+      // Update status to running
+      const status = await storage.readJson<Record<string, unknown>>(statusPath);
+      if (status) {
+        status.status = 'running';
+        status.lastAction = 'stage1_started';
+        status.lastActionAt = new Date().toISOString();
+        await storage.writeJson(statusPath, status);
+      }
+
+      // Spawn Claude (fire and forget, errors logged)
+      orchestrator.spawn({
+        prompt,
+        projectPath: session.projectPath,
+        allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+      }).then(async (result) => {
+        // Update status with result
+        const updatedStatus = await storage.readJson<Record<string, unknown>>(statusPath);
+        if (updatedStatus) {
+          updatedStatus.status = result.isError ? 'error' : 'idle';
+          updatedStatus.claudeSpawnCount = ((updatedStatus.claudeSpawnCount as number) || 0) + 1;
+          updatedStatus.lastAction = result.isError ? 'stage1_error' : 'stage1_complete';
+          updatedStatus.lastActionAt = new Date().toISOString();
+          updatedStatus.lastOutputLength = result.output.length;
+          if (result.sessionId) {
+            await sessionManager.updateSession(session.projectId, session.featureId, {
+              claudeSessionId: result.sessionId,
+            });
+          }
+          await storage.writeJson(statusPath, updatedStatus);
+        }
+        console.log(`Stage 1 ${result.isError ? 'failed' : 'completed'} for ${session.featureId}`);
+      }).catch((error) => {
+        console.error(`Stage 1 spawn error for ${session.featureId}:`, error);
+      });
+
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create session';
       res.status(400).json({ error: message });
