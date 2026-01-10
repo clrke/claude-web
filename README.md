@@ -43,20 +43,29 @@ flowchart TB
 
     subgraph Stage3["Stage 3: Implementation"]
         O --> Q["Execute plan step"]
-        Q --> R{"Unknowns encountered?"}
-        R -->|Yes| S["Pause execution"]
+        Q --> R{"Unknown encountered?"}
+        R -->|Yes| R2{"Blocker?"}
+        R2 -->|Yes, blocker| S["Pause execution"]
         S --> T["Enter plan mode"]
         T --> U["Present questions"]
         U --> V["User answers"]
         V --> W["Update plan"]
         W --> Q
+        R2 -->|No, non-blocker| TODO["Add TODO comment in code"]
+        TODO --> TODO2["Add to TODO Kanban"]
+        TODO2 --> X
         R -->|No| X{"More steps?"}
         X -->|Yes| Q
-        X -->|No| Y["Implementation complete"]
+        X -->|No| Y{"All TODOs resolved?"}
+        Y -->|No| TODO3["Show TODO Kanban"]
+        TODO3 --> TODO4["User addresses TODO"]
+        TODO4 --> TODO5["Execute TODO fix"]
+        TODO5 --> Y
+        Y -->|Yes| Z2["Implementation complete"]
     end
 
     subgraph Stage4["Stage 4: PR Creation"]
-        Y --> Z["Generate PR"]
+        Z2 --> Z["Generate PR"]
         Z --> AA["Display PR details"]
         AA --> AB["Record PR number"]
     end
@@ -88,6 +97,7 @@ flowchart TB
             Chat["Conversation View"]
             Forms["Structured Question Forms"]
             PlanEditor["Visual Plan Editor"]
+            TodoKanban["TODO Kanban Board"]
             Terminal["Live Terminal Output"]
             PRView["PR Review Panel"]
         end
@@ -98,12 +108,14 @@ flowchart TB
             SessionAPI["/api/sessions"]
             PlanAPI["/api/plans"]
             QuestionsAPI["/api/questions"]
+            TodoAPI["/api/todos"]
             PRAPI["/api/pull-requests"]
         end
         subgraph Services["Service Layer"]
             SessionMgr["Session Manager"]
             PlanService["Plan Service"]
             QuestionService["Question Service"]
+            TodoService["TODO Service"]
             PRService["PR Service"]
             ReviewService["Review Counter"]
         end
@@ -203,6 +215,47 @@ flowchart TB
     Findings --> SignOff
 ```
 
+### TODO Kanban Board
+
+```mermaid
+flowchart TB
+    subgraph TodoKanban["TODO Kanban Board"]
+        subgraph Columns["Columns"]
+            Pending["📋 Pending"]
+            InProgress["🔄 In Progress"]
+            Resolved["✅ Resolved"]
+        end
+
+        subgraph TodoCard["TODO Card"]
+            Title["Title: Handle edge case for empty input"]
+            Location["📍 src/utils/validate.ts:42"]
+            Type["Type: Non-blocker"]
+            Context["Context from Claude's analysis"]
+            Actions["[Address] [Defer] [Mark Resolved]"]
+        end
+
+        subgraph Gate["PR Gate"]
+            Check{"All TODOs resolved?"}
+            Block["🚫 Cannot create PR"]
+            Proceed["✅ Proceed to PR"]
+        end
+
+        Pending --> InProgress
+        InProgress --> Resolved
+        Columns --> Gate
+        Check -->|No pending TODOs| Proceed
+        Check -->|Has pending TODOs| Block
+    end
+```
+
+### TODO Types
+
+| Type | Description | Behavior |
+|------|-------------|----------|
+| **Blocker** | Cannot proceed without resolution | Pauses execution, enters plan mode |
+| **Non-blocker** | Can continue, but needs addressing | Adds TODO comment + kanban card |
+| **Deferred** | User explicitly defers | Moves to backlog, doesn't block PR |
+
 ## Database Schema
 
 ```mermaid
@@ -210,6 +263,7 @@ erDiagram
     sessions ||--o{ plans : has
     sessions ||--o{ questions : contains
     sessions ||--o{ review_iterations : tracks
+    sessions ||--o{ todos : contains
     plans ||--o{ plan_steps : contains
     plans ||--o{ pull_requests : generates
     pull_requests ||--o{ pr_reviews : undergoes
@@ -282,6 +336,20 @@ erDiagram
         boolean all_resolved
         datetime reviewed_at
     }
+
+    todos {
+        int id PK
+        int session_id FK
+        string title
+        string description
+        string file_path
+        int line_number
+        string todo_type
+        string status
+        string context
+        datetime created_at
+        datetime resolved_at
+    }
 ```
 
 ## WebSocket Events
@@ -324,8 +392,16 @@ flowchart LR
     subgraph ExecutionEvents["Execution"]
         T["execution.step_started"]
         U["execution.step_completed"]
-        V["execution.paused_unknown"]
+        V["execution.paused_blocker"]
         W["execution.resumed"]
+    end
+
+    subgraph TodoEvents["TODOs"]
+        T2["todo.created"]
+        T3["todo.updated"]
+        T4["todo.resolved"]
+        T5["todo.gate_blocked"]
+        T6["todo.gate_passed"]
     end
 
     subgraph PREvents["Pull Request"]
@@ -348,7 +424,11 @@ flowchart LR
 | `review.started` | `{ planId, iterationNumber }` |
 | `review.findings` | `{ planId, iteration, issues[], shortcuts[] }` |
 | `review.signoff_required` | `{ planId, reviewCount, recommendedMin: 10 }` |
-| `execution.paused_unknown` | `{ sessionId, stepId, unknowns[], needsInput: true }` |
+| `execution.paused_blocker` | `{ sessionId, stepId, blocker, needsInput: true }` |
+| `todo.created` | `{ sessionId, todoId, title, filePath, lineNumber, type }` |
+| `todo.resolved` | `{ sessionId, todoId, resolution }` |
+| `todo.gate_blocked` | `{ sessionId, pendingCount, todos[] }` |
+| `todo.gate_passed` | `{ sessionId, resolvedCount }` |
 | `pr.created` | `{ sessionId, prNumber, prUrl, title }` |
 | `pr.issue_found` | `{ prId, issue, severity, suggestion }` |
 
@@ -499,6 +579,11 @@ claude-code-web/
 │   │   │   │   ├── IterationCounter.tsx
 │   │   │   │   ├── FindingsList.tsx
 │   │   │   │   └── SignOffGate.tsx
+│   │   │   ├── TodoKanban/
+│   │   │   │   ├── KanbanBoard.tsx
+│   │   │   │   ├── TodoCard.tsx
+│   │   │   │   ├── TodoColumn.tsx
+│   │   │   │   └── PRGate.tsx
 │   │   │   ├── Terminal/
 │   │   │   │   └── LiveOutput.tsx
 │   │   │   └── PRView/
@@ -512,14 +597,17 @@ claude-code-web/
 │   │   │   ├── useSession.ts
 │   │   │   ├── usePlan.ts
 │   │   │   ├── useQuestions.ts
-│   │   │   └── useReviewCycle.ts
+│   │   │   ├── useReviewCycle.ts
+│   │   │   └── useTodos.ts
 │   │   ├── store/
 │   │   │   ├── sessionStore.ts
-│   │   │   └── planStore.ts
+│   │   │   ├── planStore.ts
+│   │   │   └── todoStore.ts
 │   │   └── types/
 │   │       ├── session.ts
 │   │       ├── plan.ts
-│   │       └── questions.ts
+│   │       ├── questions.ts
+│   │       └── todo.ts
 │   └── public/
 ├── server/
 │   ├── src/
@@ -527,12 +615,14 @@ claude-code-web/
 │   │   │   ├── sessions.ts
 │   │   │   ├── plans.ts
 │   │   │   ├── questions.ts
+│   │   │   ├── todos.ts
 │   │   │   └── pull-requests.ts
 │   │   ├── services/
 │   │   │   ├── ClaudeOrchestrator.ts
 │   │   │   ├── SessionManager.ts
 │   │   │   ├── PlanService.ts
 │   │   │   ├── QuestionParser.ts
+│   │   │   ├── TodoService.ts
 │   │   │   └── ReviewService.ts
 │   │   ├── websocket/
 │   │   │   └── handlers.ts
