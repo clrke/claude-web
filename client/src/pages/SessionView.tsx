@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useSessionStore } from '../stores/sessionStore';
 import { PlanEditor } from '../components/PlanEditor';
+import { ConversationPanel } from '../components/ConversationPanel';
+import { connectToSession, disconnectFromSession, getSocket } from '../services/socket';
 
 const STAGE_LABELS: Record<number, string> = {
   1: 'Feature Discovery',
@@ -28,13 +30,75 @@ export default function SessionView() {
     isLoading,
     error,
     fetchSession,
+    fetchConversations,
+    setSession,
+    setPlan,
+    addQuestion,
+    setExecutionStatus,
+    appendLiveOutput,
   } = useSessionStore();
 
+  // Socket.IO event handlers
+  const handleExecutionStatus = useCallback((data: { status: 'running' | 'idle' | 'error'; action: string; timestamp: string }) => {
+    setExecutionStatus(data);
+  }, [setExecutionStatus]);
+
+  const handleClaudeOutput = useCallback((data: { output: string; isComplete: boolean }) => {
+    appendLiveOutput(data.output, data.isComplete);
+    // Refresh conversations when output is complete
+    if (data.isComplete && projectId && featureId) {
+      fetchConversations(projectId, featureId);
+    }
+  }, [appendLiveOutput, fetchConversations, projectId, featureId]);
+
+  const handleQuestionsBatch = useCallback((data: { questions: Question[] }) => {
+    // Add new questions to the list
+    data.questions.forEach(q => addQuestion(q));
+  }, [addQuestion]);
+
+  const handlePlanUpdated = useCallback((data: { planVersion: number; steps: Plan['steps']; isApproved: boolean }) => {
+    const currentPlan = useSessionStore.getState().plan;
+    if (currentPlan) {
+      setPlan({ ...currentPlan, ...data });
+    }
+  }, [setPlan]);
+
+  const handleStageChanged = useCallback((data: { currentStage: number; status: string }) => {
+    const currentSession = useSessionStore.getState().session;
+    if (currentSession) {
+      setSession({ ...currentSession, currentStage: data.currentStage, status: data.status as Session['status'] });
+    }
+  }, [setSession]);
+
+  // Fetch session data
   useEffect(() => {
     if (projectId && featureId) {
       fetchSession(projectId, featureId);
     }
   }, [projectId, featureId, fetchSession]);
+
+  // Socket.IO connection
+  useEffect(() => {
+    if (!projectId || !featureId) return;
+
+    connectToSession(projectId, featureId);
+    const socket = getSocket();
+
+    socket.on('execution.status', handleExecutionStatus);
+    socket.on('claude.output', handleClaudeOutput);
+    socket.on('questions.batch', handleQuestionsBatch);
+    socket.on('plan.updated', handlePlanUpdated);
+    socket.on('stage.changed', handleStageChanged);
+
+    return () => {
+      socket.off('execution.status', handleExecutionStatus);
+      socket.off('claude.output', handleClaudeOutput);
+      socket.off('questions.batch', handleQuestionsBatch);
+      socket.off('plan.updated', handlePlanUpdated);
+      socket.off('stage.changed', handleStageChanged);
+      disconnectFromSession(projectId, featureId);
+    };
+  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handleStageChanged]);
 
   if (isLoading) {
     return (
@@ -97,6 +161,11 @@ export default function SessionView() {
           {/* Stage 3+: Implementation Progress */}
           {currentStage >= 3 && (
             <ImplementationSection plan={plan} />
+          )}
+
+          {/* Conversation Panel */}
+          {projectId && featureId && (
+            <ConversationPanel projectId={projectId} featureId={featureId} />
           )}
         </div>
 
@@ -380,4 +449,4 @@ function ImplementationSection({
 }
 
 // Type imports for internal use
-import type { Plan, PlanStep, Question } from '@claude-code-web/shared';
+import type { Plan, PlanStep, Question, Session } from '@claude-code-web/shared';

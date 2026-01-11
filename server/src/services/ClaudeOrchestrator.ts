@@ -1,6 +1,8 @@
 import { spawn, ChildProcess } from 'child_process';
 import { OutputParser, ParsedMarker } from './OutputParser';
 
+export type OutputCallback = (chunk: string, isComplete: boolean) => void;
+
 export interface SpawnOptions {
   prompt: string;
   projectPath: string;
@@ -8,6 +10,7 @@ export interface SpawnOptions {
   allowedTools?: string[];
   skipPermissions?: boolean;
   timeoutMs?: number;
+  onOutput?: OutputCallback;
 }
 
 export interface ClaudeCommand {
@@ -92,7 +95,11 @@ export class ClaudeOrchestrator {
       }, timeoutMs);
 
       childProcess.stdout.on('data', (data: Buffer) => {
-        stdout += data.toString();
+        const chunk = data.toString();
+        stdout += chunk;
+        // Note: With --output-format json, we get all output at the end
+        // The callback is called with each chunk but content isn't usable until complete
+        options.onOutput?.(chunk, false);
       });
 
       childProcess.stderr.on('data', (data: Buffer) => {
@@ -111,6 +118,9 @@ export class ClaudeOrchestrator {
           // Check both JSON is_error flag AND exit code
           const hasError = jsonOutput.is_error || (code !== null && code !== 0);
 
+          // Broadcast final output with isComplete=true
+          options.onOutput?.(jsonOutput.result || '', true);
+
           resolve({
             output: jsonOutput.result || '',
             sessionId: jsonOutput.session_id || null,
@@ -124,6 +134,9 @@ export class ClaudeOrchestrator {
           const errorMessage = stderr.trim()
             ? `${stderr.trim()}`
             : `Failed to parse Claude output: ${parseError}`;
+
+          // Broadcast error output
+          options.onOutput?.(stdout, true);
 
           resolve({
             output: stdout,

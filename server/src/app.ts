@@ -104,6 +104,9 @@ export function createApp(
         prompt,
         projectPath: session.projectPath,
         allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+        onOutput: (output, isComplete) => {
+          eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
+        },
       }).then(async (result) => {
         // Use ClaudeResultHandler to save all parsed data
         await resultHandler.handleStage1Result(session, result, prompt);
@@ -236,6 +239,9 @@ export function createApp(
           projectPath: session.projectPath,
           sessionId: session.claudeSessionId || undefined, // Use --resume if available
           allowedTools: orchestrator.getStageTools(2),
+          onOutput: (output, isComplete) => {
+            eventBroadcaster?.claudeOutput(projectId, featureId, output, isComplete);
+          },
         }).then(async (result) => {
           await resultHandler.handleStage2Result(session, result, prompt);
 
@@ -389,6 +395,18 @@ export function createApp(
       res.json({ success: true, feedback });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to request changes';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Get conversations (full Claude interaction history)
+  app.get('/api/sessions/:projectId/:featureId/conversations', async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+      const conversations = await storage.readJson(`${projectId}/${featureId}/conversations.json`);
+      res.json(conversations || { entries: [] });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get conversations';
       res.status(500).json({ error: message });
     }
   });

@@ -197,4 +197,138 @@ describe('API Routes', () => {
       expect(response.body.answer).toEqual({ values: ['login', 'register'] });
     });
   });
+
+  describe('GET /api/sessions/:projectId/:featureId/conversations', () => {
+    let projectId: string;
+    let featureId: string;
+
+    beforeEach(async () => {
+      // Create a session first
+      const session = await sessionManager.createSession({
+        title: 'Test Feature',
+        featureDescription: 'Test description',
+        projectPath: '/test/project',
+      });
+      projectId = session.projectId;
+      featureId = session.featureId;
+    });
+
+    it('should return empty entries when no conversations exist', async () => {
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/conversations`);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ entries: [] });
+    });
+
+    it('should return conversation entries when they exist', async () => {
+      const conversationsPath = `${projectId}/${featureId}/conversations.json`;
+      const mockConversations = {
+        entries: [
+          {
+            stage: 1,
+            timestamp: '2026-01-11T12:00:00Z',
+            prompt: 'Explore the codebase',
+            output: 'I found the following files...',
+            sessionId: 'claude-session-123',
+            costUsd: 0.05,
+            isError: false,
+            parsed: {
+              decisions: [],
+              planSteps: [],
+              planFilePath: null,
+              planApproved: false,
+              planModeEntered: false,
+              planModeExited: false,
+            },
+          },
+        ],
+      };
+      await storage.writeJson(conversationsPath, mockConversations);
+
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/conversations`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.entries).toHaveLength(1);
+      expect(response.body.entries[0]).toMatchObject({
+        stage: 1,
+        prompt: 'Explore the codebase',
+        output: 'I found the following files...',
+        costUsd: 0.05,
+      });
+    });
+
+    it('should return multiple conversation entries in order', async () => {
+      const conversationsPath = `${projectId}/${featureId}/conversations.json`;
+      const mockConversations = {
+        entries: [
+          {
+            stage: 1,
+            timestamp: '2026-01-11T12:00:00Z',
+            prompt: 'Stage 1 prompt',
+            output: 'Stage 1 output',
+            sessionId: 'session-1',
+            costUsd: 0.03,
+            isError: false,
+            parsed: { decisions: [], planSteps: [], planFilePath: null, planApproved: false, planModeEntered: false, planModeExited: false },
+          },
+          {
+            stage: 2,
+            timestamp: '2026-01-11T13:00:00Z',
+            prompt: 'Stage 2 prompt',
+            output: 'Stage 2 output',
+            sessionId: 'session-1',
+            costUsd: 0.07,
+            isError: false,
+            parsed: { decisions: [], planSteps: [], planFilePath: null, planApproved: true, planModeEntered: false, planModeExited: false },
+          },
+        ],
+      };
+      await storage.writeJson(conversationsPath, mockConversations);
+
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/conversations`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.entries).toHaveLength(2);
+      expect(response.body.entries[0].stage).toBe(1);
+      expect(response.body.entries[1].stage).toBe(2);
+    });
+
+    it('should include error information when conversation had errors', async () => {
+      const conversationsPath = `${projectId}/${featureId}/conversations.json`;
+      const mockConversations = {
+        entries: [
+          {
+            stage: 1,
+            timestamp: '2026-01-11T12:00:00Z',
+            prompt: 'Explore the codebase',
+            output: '',
+            sessionId: null,
+            costUsd: 0,
+            isError: true,
+            error: 'Claude process timed out',
+            parsed: { decisions: [], planSteps: [], planFilePath: null, planApproved: false, planModeEntered: false, planModeExited: false },
+          },
+        ],
+      };
+      await storage.writeJson(conversationsPath, mockConversations);
+
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/conversations`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.entries[0].isError).toBe(true);
+      expect(response.body.entries[0].error).toBe('Claude process timed out');
+    });
+
+    it('should return 200 with empty entries for non-existent project', async () => {
+      const response = await request(app)
+        .get('/api/sessions/nonexistent/session/conversations');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ entries: [] });
+    });
+  });
 });

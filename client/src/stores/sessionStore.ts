@@ -1,11 +1,34 @@
 import { create } from 'zustand';
 import type { Session, Plan, Question } from '@claude-code-web/shared';
 
+export interface ConversationEntry {
+  stage: number;
+  timestamp: string;
+  prompt: string;
+  output: string;
+  sessionId: string | null;
+  costUsd: number;
+  isError: boolean;
+  error?: string;
+}
+
+export interface ExecutionStatus {
+  status: 'running' | 'idle' | 'error';
+  action: string;
+  timestamp: string;
+}
+
 interface SessionState {
   // Current session data
   session: Session | null;
   plan: Plan | null;
   questions: Question[];
+  conversations: ConversationEntry[];
+
+  // Real-time state
+  executionStatus: ExecutionStatus | null;
+  liveOutput: string;
+  isOutputComplete: boolean;
 
   // UI state
   isLoading: boolean;
@@ -17,12 +40,16 @@ interface SessionState {
   setQuestions: (questions: Question[]) => void;
   addQuestion: (question: Question) => void;
   answerQuestion: (questionId: string, answer: Question['answer']) => void;
+  setConversations: (conversations: ConversationEntry[]) => void;
+  setExecutionStatus: (status: ExecutionStatus) => void;
+  appendLiveOutput: (output: string, isComplete: boolean) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   reset: () => void;
 
   // Async actions
   fetchSession: (projectId: string, featureId: string) => Promise<void>;
+  fetchConversations: (projectId: string, featureId: string) => Promise<void>;
   submitQuestionAnswer: (questionId: string, answer: Question['answer']) => Promise<void>;
   approvePlan: () => Promise<void>;
   requestPlanChanges: (feedback: string) => Promise<void>;
@@ -32,6 +59,10 @@ const initialState = {
   session: null,
   plan: null,
   questions: [],
+  conversations: [],
+  executionStatus: null,
+  liveOutput: '',
+  isOutputComplete: true,
   isLoading: false,
   error: null,
 };
@@ -53,6 +84,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       questions: state.questions.map((q) =>
         q.id === questionId ? { ...q, answer, answeredAt: new Date().toISOString() } : q
       ),
+    })),
+
+  setConversations: (conversations) => set({ conversations }),
+
+  setExecutionStatus: (executionStatus) => set({ executionStatus }),
+
+  appendLiveOutput: (output, isComplete) =>
+    set((state) => ({
+      liveOutput: isComplete ? output : state.liveOutput + output,
+      isOutputComplete: isComplete,
     })),
 
   setLoading: (isLoading) => set({ isLoading }),
@@ -87,6 +128,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         error: error instanceof Error ? error.message : 'Failed to fetch session',
         isLoading: false,
       });
+    }
+  },
+
+  fetchConversations: async (projectId, featureId) => {
+    try {
+      const response = await fetch(`/api/sessions/${projectId}/${featureId}/conversations`);
+      if (response.ok) {
+        const data = await response.json();
+        set({ conversations: data.entries || [] });
+      }
+    } catch (error) {
+      console.error('Failed to fetch conversations:', error);
     }
   },
 

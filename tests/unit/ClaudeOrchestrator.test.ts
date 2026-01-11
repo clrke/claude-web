@@ -379,4 +379,129 @@ Create authentication
       await expect(spawnPromise).rejects.toThrow('ENOENT');
     });
   });
+
+  describe('onOutput callback', () => {
+    it('should call onOutput for each stdout chunk', async () => {
+      const mockProcess = new EventEmitter() as any;
+      mockProcess.stdout = new EventEmitter();
+      mockProcess.stderr = new EventEmitter();
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const onOutput = jest.fn();
+
+      const spawnPromise = orchestrator.spawn({
+        prompt: 'Hello',
+        projectPath: '/test',
+        onOutput,
+      });
+
+      const fullOutput = JSON.stringify({
+        result: 'Hello!',
+        session_id: 'session-123',
+        cost_usd: 0.01,
+        is_error: false,
+      });
+
+      // Emit in chunks
+      mockProcess.stdout.emit('data', Buffer.from(fullOutput.substring(0, 20)));
+      mockProcess.stdout.emit('data', Buffer.from(fullOutput.substring(20)));
+      mockProcess.emit('close', 0);
+
+      await spawnPromise;
+
+      // Should be called 3 times: 2 chunks + 1 final with isComplete=true
+      expect(onOutput).toHaveBeenCalledTimes(3);
+      expect(onOutput).toHaveBeenNthCalledWith(1, fullOutput.substring(0, 20), false);
+      expect(onOutput).toHaveBeenNthCalledWith(2, fullOutput.substring(20), false);
+      expect(onOutput).toHaveBeenNthCalledWith(3, 'Hello!', true);
+    });
+
+    it('should call onOutput with isComplete=true on successful completion', async () => {
+      const mockProcess = new EventEmitter() as any;
+      mockProcess.stdout = new EventEmitter();
+      mockProcess.stderr = new EventEmitter();
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const onOutput = jest.fn();
+
+      const spawnPromise = orchestrator.spawn({
+        prompt: 'Hello',
+        projectPath: '/test',
+        onOutput,
+      });
+
+      const mockOutput = JSON.stringify({
+        result: 'Final response',
+        session_id: 'session-123',
+        cost_usd: 0.01,
+        is_error: false,
+      });
+
+      mockProcess.stdout.emit('data', Buffer.from(mockOutput));
+      mockProcess.emit('close', 0);
+
+      await spawnPromise;
+
+      // Last call should have isComplete=true and the parsed result
+      const lastCall = onOutput.mock.calls[onOutput.mock.calls.length - 1];
+      expect(lastCall[0]).toBe('Final response');
+      expect(lastCall[1]).toBe(true);
+    });
+
+    it('should call onOutput with isComplete=true even on parse error', async () => {
+      const mockProcess = new EventEmitter() as any;
+      mockProcess.stdout = new EventEmitter();
+      mockProcess.stderr = new EventEmitter();
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const onOutput = jest.fn();
+
+      const spawnPromise = orchestrator.spawn({
+        prompt: 'Hello',
+        projectPath: '/test',
+        onOutput,
+      });
+
+      // Invalid JSON output
+      mockProcess.stdout.emit('data', Buffer.from('invalid json'));
+      mockProcess.emit('close', 1);
+
+      await spawnPromise;
+
+      // Should still call with isComplete=true
+      const lastCall = onOutput.mock.calls[onOutput.mock.calls.length - 1];
+      expect(lastCall[0]).toBe('invalid json');
+      expect(lastCall[1]).toBe(true);
+    });
+
+    it('should work without onOutput callback', async () => {
+      const mockProcess = new EventEmitter() as any;
+      mockProcess.stdout = new EventEmitter();
+      mockProcess.stderr = new EventEmitter();
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      // No onOutput callback - should not throw
+      const spawnPromise = orchestrator.spawn({
+        prompt: 'Hello',
+        projectPath: '/test',
+      });
+
+      const mockOutput = JSON.stringify({
+        result: 'Response',
+        session_id: 'session-123',
+        cost_usd: 0.01,
+        is_error: false,
+      });
+
+      mockProcess.stdout.emit('data', Buffer.from(mockOutput));
+      mockProcess.emit('close', 0);
+
+      const result = await spawnPromise;
+      expect(result.output).toBe('Response');
+    });
+  });
 });
