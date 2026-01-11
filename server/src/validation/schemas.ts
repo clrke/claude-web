@@ -81,12 +81,20 @@ export const StageTransitionInputSchema = z.object({
   targetStage: z.number().int().min(1).max(5),
 });
 
-// Answer question input schema
+// Answer question input schema (single question)
 export const AnswerQuestionInputSchema = z.union([
   z.object({ value: z.string() }),
   z.object({ text: z.string() }),
   z.object({ values: z.array(z.string()) }),
 ]);
+
+// Batch answers input schema (all unanswered questions at once)
+export const BatchAnswersInputSchema = z.array(
+  z.object({
+    questionId: z.string().min(1),
+    answer: AnswerQuestionInputSchema,
+  })
+).min(1, 'At least one answer is required');
 
 // Plan approval input schema
 export const PlanApprovalInputSchema = z.object({}).strict();
@@ -100,4 +108,5 @@ export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
 export type UpdateSessionInput = z.infer<typeof UpdateSessionInputSchema>;
 export type StageTransitionInput = z.infer<typeof StageTransitionInputSchema>;
 export type AnswerQuestionInput = z.infer<typeof AnswerQuestionInputSchema>;
+export type BatchAnswersInput = z.infer<typeof BatchAnswersInputSchema>;
 export type RequestChangesInput = z.infer<typeof RequestChangesInputSchema>;

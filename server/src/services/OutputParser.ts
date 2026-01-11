@@ -72,7 +72,7 @@ export class OutputParser {
       implementationSummary: this.parseImplementationSummary(input),
       implementationStatus: this.parseImplementationStatus(input),
       prCreated: this.parsePRCreated(input),
-      planApproved: input.includes('[PLAN_APPROVED]'),
+      planApproved: /^\[PLAN_APPROVED\]$/m.test(input),
     };
   }
 
@@ -98,6 +98,16 @@ export class OutputParser {
         } else if (line.trim()) {
           questionLines.push(line);
         }
+      }
+
+      // Only add decisions that have at least one option
+      if (options.length === 0) {
+        continue;
+      }
+
+      // If no option is marked as recommended, mark the first one
+      if (!options.some(o => o.recommended)) {
+        options[0].recommended = true;
       }
 
       decisions.push({

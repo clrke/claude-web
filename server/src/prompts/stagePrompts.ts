@@ -1,4 +1,4 @@
-import { Session, Plan } from '@claude-code-web/shared';
+import { Session, Plan, Question } from '@claude-code-web/shared';
 
 /**
  * Build Stage 1: Feature Discovery prompt
@@ -131,5 +131,108 @@ How should we address this?
 5. After user answers priority 1 questions, present priority 2 questions, and so on.
 
 6. If no issues found or all decisions resolved:
+[PLAN_APPROVED]`;
+}
+
+/**
+ * Build Stage 2: Plan Revision prompt
+ * Revises plan based on user feedback.
+ */
+export function buildPlanRevisionPrompt(session: Session, plan: Plan, feedback: string): string {
+  const planStepsText = plan.steps.length > 0
+    ? plan.steps.map((step, i) => {
+        const parentInfo = step.parentId ? ` (depends on: ${step.parentId})` : '';
+        return `${i + 1}. [${step.id}] ${step.title}${parentInfo}\n   ${step.description || 'No description'}`;
+      }).join('\n\n')
+    : 'No plan steps defined.';
+
+  return `You are revising an implementation plan based on user feedback.
+
+## Feature
+Title: ${session.title}
+Description: ${session.featureDescription}
+
+## Current Plan (v${plan.planVersion})
+${planStepsText}
+
+## User Feedback
+${feedback}
+
+## Instructions
+1. Carefully consider the user's feedback
+2. Revise the plan to address their concerns
+3. Output the revised plan steps using the format:
+
+[PLAN_STEP id="step-id" parent="null|parent-id" status="pending"]
+Step title
+Step description
+[/PLAN_STEP]
+
+4. If you have clarifying questions about the feedback, present them as decisions:
+[DECISION_NEEDED priority="1" category="scope"]
+Question about the feedback...
+
+- Option A: Interpretation 1 (recommended)
+- Option B: Interpretation 2
+[/DECISION_NEEDED]
+
+5. After revising the plan, continue with Stage 2 review process to find any remaining issues.`;
+}
+
+/**
+ * Build prompt to continue after user answers a batch of questions.
+ * Each review iteration has progressive complexity questions.
+ * The server sends this prompt when all questions from the same batch are answered.
+ */
+export function buildBatchAnswersContinuationPrompt(
+  answeredQuestions: Question[],
+  currentStage: number
+): string {
+  const answers = answeredQuestions.map(q => {
+    const answerText = typeof q.answer?.value === 'string'
+      ? q.answer.value
+      : JSON.stringify(q.answer?.value);
+    return `**Q:** ${q.questionText}\n**A:** ${answerText}`;
+  }).join('\n\n');
+
+  if (currentStage === 1) {
+    return `The user answered your discovery questions:
+
+${answers}
+
+Continue with the discovery process based on these answers.
+
+IMPORTANT: If you need more clarification, you MUST ask questions using this exact format:
+[DECISION_NEEDED priority="1|2|3" category="scope|approach|technical|design"]
+Question here?
+- Option A: Description (recommended)
+- Option B: Description
+[/DECISION_NEEDED]
+
+When you have enough information:
+1. Generate the implementation plan with [PLAN_STEP] markers
+2. Write the plan to a file and output: [PLAN_FILE path="/path/to/plan.md"]
+3. Exit plan mode and output: [PLAN_MODE_EXITED]`;
+  }
+
+  // Stage 2 continuation
+  return `The user answered your review questions:
+
+${answers}
+
+Continue with the review process based on these answers.
+
+IMPORTANT: If there are more issues to address, you MUST use this exact format:
+[DECISION_NEEDED priority="1|2|3" category="code_quality|architecture|security|performance"]
+Issue: Description of the problem found.
+Impact: What could go wrong if not addressed.
+
+How should we address this?
+- Option A: Recommended fix approach (recommended)
+- Option B: Alternative fix approach
+- Option C: Accept risk and proceed without fix
+[/DECISION_NEEDED]
+
+If all issues are resolved and the plan is ready for implementation, output:
 [PLAN_APPROVED]`;
 }

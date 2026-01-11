@@ -67,8 +67,11 @@ describe('API Routes', () => {
       projectId = session.projectId;
       featureId = session.featureId;
 
-      // Add a question to the session
+      // Add questions to the session
+      // Note: We add two questions with different askedAt timestamps to prevent
+      // the batch completion logic from triggering Claude spawn during tests
       const questionsPath = `${projectId}/${featureId}/questions.json`;
+      const baseTime = new Date().toISOString();
       await storage.writeJson(questionsPath, {
         version: '1.0',
         sessionId: session.id,
@@ -85,7 +88,22 @@ describe('API Routes', () => {
             answer: null,
             isRequired: true,
             priority: 1,
-            askedAt: new Date().toISOString(),
+            askedAt: baseTime,
+            answeredAt: null,
+          },
+          {
+            // Second unanswered question in the same batch prevents Claude spawn
+            id: 'q1-batch-placeholder',
+            stage: 'discovery',
+            questionType: 'single_choice',
+            questionText: 'Placeholder question (same batch)',
+            options: [
+              { value: 'a', label: 'Option A', recommended: true },
+            ],
+            answer: null,
+            isRequired: false,
+            priority: 3,
+            askedAt: baseTime,
             answeredAt: null,
           },
         ],
@@ -142,21 +160,37 @@ describe('API Routes', () => {
     });
 
     it('should support text input answers', async () => {
-      // Add a text input question
+      // Add a text input question with a placeholder to prevent batch completion
       const questionsPath = `${projectId}/${featureId}/questions.json`;
       const questionsData = await storage.readJson<{ questions: Array<Record<string, unknown>> }>(questionsPath);
-      questionsData!.questions.push({
-        id: 'q2',
-        stage: 'discovery',
-        questionType: 'text_input',
-        questionText: 'Any additional notes?',
-        options: [],
-        answer: null,
-        isRequired: false,
-        priority: 2,
-        askedAt: new Date().toISOString(),
-        answeredAt: null,
-      });
+      const q2Time = new Date().toISOString();
+      questionsData!.questions.push(
+        {
+          id: 'q2',
+          stage: 'discovery',
+          questionType: 'text_input',
+          questionText: 'Any additional notes?',
+          options: [],
+          answer: null,
+          isRequired: false,
+          priority: 2,
+          askedAt: q2Time,
+          answeredAt: null,
+        },
+        {
+          // Placeholder to prevent batch completion triggering Claude spawn
+          id: 'q2-batch-placeholder',
+          stage: 'discovery',
+          questionType: 'single_choice',
+          questionText: 'Placeholder',
+          options: [{ value: 'a', label: 'A', recommended: true }],
+          answer: null,
+          isRequired: false,
+          priority: 3,
+          askedAt: q2Time,
+          answeredAt: null,
+        }
+      );
       await storage.writeJson(questionsPath, questionsData);
 
       const response = await request(app)
@@ -168,25 +202,41 @@ describe('API Routes', () => {
     });
 
     it('should support multi-choice answers', async () => {
-      // Add a multi-choice question
+      // Add a multi-choice question with a placeholder to prevent batch completion
       const questionsPath = `${projectId}/${featureId}/questions.json`;
       const questionsData = await storage.readJson<{ questions: Array<Record<string, unknown>> }>(questionsPath);
-      questionsData!.questions.push({
-        id: 'q3',
-        stage: 'discovery',
-        questionType: 'multi_choice',
-        questionText: 'Which features to include?',
-        options: [
-          { value: 'login', label: 'Login' },
-          { value: 'register', label: 'Register' },
-          { value: 'forgot', label: 'Forgot Password' },
-        ],
-        answer: null,
-        isRequired: true,
-        priority: 1,
-        askedAt: new Date().toISOString(),
-        answeredAt: null,
-      });
+      const q3Time = new Date().toISOString();
+      questionsData!.questions.push(
+        {
+          id: 'q3',
+          stage: 'discovery',
+          questionType: 'multi_choice',
+          questionText: 'Which features to include?',
+          options: [
+            { value: 'login', label: 'Login' },
+            { value: 'register', label: 'Register' },
+            { value: 'forgot', label: 'Forgot Password' },
+          ],
+          answer: null,
+          isRequired: true,
+          priority: 1,
+          askedAt: q3Time,
+          answeredAt: null,
+        },
+        {
+          // Placeholder to prevent batch completion triggering Claude spawn
+          id: 'q3-batch-placeholder',
+          stage: 'discovery',
+          questionType: 'single_choice',
+          questionText: 'Placeholder',
+          options: [{ value: 'a', label: 'A', recommended: true }],
+          answer: null,
+          isRequired: false,
+          priority: 3,
+          askedAt: q3Time,
+          answeredAt: null,
+        }
+      );
       await storage.writeJson(questionsPath, questionsData);
 
       const response = await request(app)

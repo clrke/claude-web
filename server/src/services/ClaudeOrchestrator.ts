@@ -45,9 +45,127 @@ const STAGE_TOOLS: Record<number, string[]> = {
 };
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const HAIKU_TIMEOUT_MS = 30 * 1000; // 30 seconds for Haiku post-processing
+
+// Prompt for Haiku to extract and format questions
+const QUESTION_EXTRACTION_PROMPT = `You are a formatting assistant. Extract any questions or decisions from the following text and format them using the [DECISION_NEEDED] marker format.
+
+Rules:
+1. Only extract actual questions that require user input/decision
+2. Each question must have at least 2 options
+3. Mark one option as (recommended) if the text suggests a preference
+4. Use priority 1 for fundamental/scope questions, 2 for technical details, 3 for minor preferences
+5. Use appropriate category: scope, approach, technical, design, code_quality, architecture, security, performance
+
+Output format for EACH question found:
+[DECISION_NEEDED priority="1" category="scope"]
+The question text here?
+- Option A: Description (recommended)
+- Option B: Description
+[/DECISION_NEEDED]
+
+If no questions are found that need user decisions, output exactly: [NO_QUESTIONS]
+
+Text to analyze:
+`;
 
 export class ClaudeOrchestrator {
   constructor(private readonly outputParser: OutputParser) {}
+
+  /**
+   * Check if output likely contains unformatted questions
+   */
+  private looksLikeQuestions(output: string): boolean {
+    // Heuristics to detect question-like content
+    const questionIndicators = [
+      /\?\s*$/m,                          // Ends with question mark
+      /should\s+(we|i|it)\b/i,            // "should we/I/it"
+      /would\s+you\s+(prefer|like)/i,     // "would you prefer/like"
+      /which\s+(option|approach)/i,       // "which option/approach"
+      /please\s+(choose|select|decide)/i, // "please choose/select/decide"
+      /decision[s]?\s*(needed|required)/i,// "decision needed"
+      /option\s*[a-z]:/i,                 // "Option A:"
+      /^\s*[-•]\s+/m,                     // Bullet points (options)
+      /\(recommended\)/i,                 // Recommendation marker
+    ];
+
+    const matchCount = questionIndicators.filter(pattern => pattern.test(output)).length;
+    return matchCount >= 2; // At least 2 indicators suggest questions
+  }
+
+  /**
+   * Post-process output with Haiku to extract and format questions
+   */
+  async postProcessWithHaiku(output: string, cwd: string): Promise<ParsedMarker | null> {
+    if (!this.looksLikeQuestions(output)) {
+      return null;
+    }
+
+    console.log('Output looks like it contains questions, using Haiku to extract...');
+
+    const prompt = QUESTION_EXTRACTION_PROMPT + output;
+
+    return new Promise((resolve) => {
+      const childProcess = spawn('claude', [
+        '--print',
+        '--output-format', 'json',
+        '--model', 'haiku',
+        '-p', prompt,
+      ], {
+        cwd,
+        env: { ...globalThis.process.env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      const timeoutId = setTimeout(() => {
+        childProcess.kill();
+        console.log('Haiku post-processing timed out');
+        resolve(null);
+      }, HAIKU_TIMEOUT_MS);
+
+      childProcess.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString();
+      });
+
+      childProcess.on('close', (code: number | null) => {
+        clearTimeout(timeoutId);
+
+        if (code !== 0) {
+          console.log('Haiku post-processing failed with code:', code);
+          resolve(null);
+          return;
+        }
+
+        try {
+          const jsonOutput = JSON.parse(stdout);
+          const result = jsonOutput.result || '';
+
+          if (result.includes('[NO_QUESTIONS]')) {
+            console.log('Haiku found no questions to extract');
+            resolve(null);
+            return;
+          }
+
+          const parsed = this.outputParser.parse(result);
+          if (parsed.decisions.length > 0) {
+            console.log(`Haiku extracted ${parsed.decisions.length} questions`);
+            resolve(parsed);
+          } else {
+            resolve(null);
+          }
+        } catch (error) {
+          console.log('Failed to parse Haiku output:', error);
+          resolve(null);
+        }
+      });
+
+      childProcess.on('error', () => {
+        clearTimeout(timeoutId);
+        resolve(null);
+      });
+    });
+  }
 
   buildCommand(options: SpawnOptions): ClaudeCommand {
     const args: string[] = ['--print', '--output-format', 'json'];

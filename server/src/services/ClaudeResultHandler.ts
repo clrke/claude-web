@@ -236,7 +236,22 @@ export class ClaudeResultHandler {
 
     plan.planVersion = (plan.planVersion || 0) + 1;
     plan.createdAt = new Date().toISOString();
+    // Reset approval when plan steps change - plan needs re-approval
+    plan.isApproved = false;
 
+    await this.storage.writeJson(planPath, plan);
+  }
+
+  /**
+   * Increment plan.reviewCount after Stage 2 review completes.
+   */
+  async incrementReviewCount(sessionDir: string): Promise<void> {
+    const planPath = `${sessionDir}/plan.json`;
+    const plan = await this.storage.readJson<Plan>(planPath);
+
+    if (!plan) return;
+
+    plan.reviewCount = (plan.reviewCount || 0) + 1;
     await this.storage.writeJson(planPath, plan);
   }
 

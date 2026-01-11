@@ -35,16 +35,21 @@ export class EventBroadcaster {
   questionsAsked(projectId: string, featureId: string, questions: Question[]): void {
     const room = this.getRoom(projectId, featureId);
 
-    // Emit batch event
+    // Emit batch event with all required Question fields
     this.io.to(room).emit('questions.batch', {
       count: questions.length,
       questions: questions.map(q => ({
         id: q.id,
-        priority: q.priority,
+        stage: q.stage,
         questionType: q.questionType,
+        category: q.category,
+        priority: q.priority,
         questionText: q.questionText,
         options: q.options,
-        category: q.category,
+        answer: q.answer,
+        isRequired: q.isRequired,
+        askedAt: q.askedAt,
+        answeredAt: q.answeredAt,
       })),
       timestamp: new Date().toISOString(),
     });
@@ -53,11 +58,16 @@ export class EventBroadcaster {
     for (const question of questions) {
       this.io.to(room).emit('question.asked', {
         id: question.id,
-        priority: question.priority,
+        stage: question.stage,
         questionType: question.questionType,
+        category: question.category,
+        priority: question.priority,
         questionText: question.questionText,
         options: question.options,
-        category: question.category,
+        answer: question.answer,
+        isRequired: question.isRequired,
+        askedAt: question.askedAt,
+        answeredAt: question.answeredAt,
         timestamp: new Date().toISOString(),
       });
     }
@@ -85,11 +95,15 @@ export class EventBroadcaster {
       planVersion: plan.planVersion,
       stepCount: plan.steps.length,
       isApproved: plan.isApproved,
+      reviewCount: plan.reviewCount,
       steps: plan.steps.map(s => ({
         id: s.id,
-        title: s.title,
-        status: s.status,
         parentId: s.parentId,
+        orderIndex: s.orderIndex,
+        title: s.title,
+        description: s.description,
+        status: s.status,
+        metadata: s.metadata,
       })),
       timestamp: new Date().toISOString(),
     });
