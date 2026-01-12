@@ -76,6 +76,7 @@ async function spawnStage2Review(
   eventBroadcaster: EventBroadcaster | undefined,
   prompt: string
 ): Promise<void> {
+  console.log(`Starting Stage 2 review for ${session.featureId}`);
   const sessionDir = `${session.projectId}/${session.featureId}`;
   const statusPath = `${sessionDir}/status.json`;
 
