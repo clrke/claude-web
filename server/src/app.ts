@@ -571,16 +571,13 @@ async function handleStage5Result(
     const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 2);
     eventBroadcaster?.stageChanged(updatedSession, previousStage);
 
-    // Update status
-    const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
-    if (finalStatus) {
-      finalStatus.status = 'idle';
-      finalStatus.lastAction = 'stage5_return_to_stage2';
-      finalStatus.lastActionAt = new Date().toISOString();
-      await storage.writeJson(statusPath, finalStatus);
+    // Auto-spawn Stage 2 with plan revision prompt
+    const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+    if (plan) {
+      const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, `CI/Review Issues from Stage 5:\n${reason}\n\nPlease update the plan to address these issues.`);
+      await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, revisionPrompt);
     }
 
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage5_return_to_stage2');
     return;
   }
 
