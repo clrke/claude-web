@@ -44,6 +44,15 @@ export interface ParsedPRCreated {
   targetBranch: string;
 }
 
+export interface ParsedCIStatus {
+  status: 'passing' | 'failing' | 'pending';
+  checks: string;
+}
+
+export interface ParsedReturnToStage2 {
+  reason: string;
+}
+
 export interface ParsedMarker {
   decisions: ParsedDecision[];
   planSteps: ParsedPlanStep[];
@@ -59,6 +68,11 @@ export interface ParsedMarker {
   testsAdded: string[];
   prCreated: ParsedPRCreated | null;
   planApproved: boolean;
+  // Stage 5: PR Review markers
+  ciStatus: ParsedCIStatus | null;
+  ciFailed: boolean;
+  prApproved: boolean;
+  returnToStage2: ParsedReturnToStage2 | null;
 }
 
 export class OutputParser {
@@ -80,6 +94,11 @@ export class OutputParser {
       testsAdded: implementationInfo.testsAdded,
       prCreated: this.parsePRCreated(input),
       planApproved: /^\[PLAN_APPROVED\]$/m.test(input),
+      // Stage 5: PR Review markers
+      ciStatus: this.parseCIStatus(input),
+      ciFailed: input.includes('[CI_FAILED]'),
+      prApproved: input.includes('[PR_APPROVED]'),
+      returnToStage2: this.parseReturnToStage2(input),
     };
   }
 
@@ -272,5 +291,31 @@ export class OutputParser {
     if (!value) return defaultValue;
     const parsed = parseInt(value, 10);
     return Number.isNaN(parsed) ? defaultValue : parsed;
+  }
+
+  private parseCIStatus(input: string): ParsedCIStatus | null {
+    const regex = /\[CI_STATUS\s+status="(passing|failing|pending)"\]([\s\S]*?)\[\/CI_STATUS\]/;
+    const match = input.match(regex);
+
+    if (!match) return null;
+
+    return {
+      status: match[1] as 'passing' | 'failing' | 'pending',
+      checks: match[2].trim(),
+    };
+  }
+
+  private parseReturnToStage2(input: string): ParsedReturnToStage2 | null {
+    const regex = /\[RETURN_TO_STAGE_2\]([\s\S]*?)\[\/RETURN_TO_STAGE_2\]/;
+    const match = input.match(regex);
+
+    if (!match) return null;
+
+    const content = match[1].trim();
+    const reasonMatch = content.match(/Reason:\s*(.+)/i);
+
+    return {
+      reason: reasonMatch ? reasonMatch[1].trim() : content,
+    };
   }
 }

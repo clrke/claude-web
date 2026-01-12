@@ -8,7 +8,7 @@ import { ClaudeResultHandler } from './services/ClaudeResultHandler';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
-import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildStage4Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt } from './prompts/stagePrompts';
+import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildStage4Prompt, buildStage5Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt } from './prompts/stagePrompts';
 import { Session } from '@claude-code-web/shared';
 import { ClaudeResult } from './services/ClaudeOrchestrator';
 import { Plan, Question } from '@claude-code-web/shared';
@@ -311,7 +311,7 @@ async function spawnStage3Implementation(
 
     // Handle Stage 3→4 transition when implementation complete
     if (implementationComplete) {
-      await handleStage3Completion(session, sessionDir, storage, sessionManager, eventBroadcaster, result);
+      await handleStage3Completion(session, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster, result);
     }
 
     console.log(`Stage 3 ${implementationComplete ? 'completed' : (hasBlocker ? 'blocked' : 'in progress')} for ${session.featureId}`);
@@ -330,6 +330,7 @@ async function handleStage3Completion(
   sessionDir: string,
   storage: FileStorageService,
   sessionManager: SessionManager,
+  resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined,
   result: ClaudeResult
 ): Promise<void> {
@@ -365,7 +366,7 @@ async function handleStage3Completion(
 
   // Auto-start Stage 4 PR creation
   const stage4Prompt = buildStage4Prompt(updatedSession, plan);
-  await spawnStage4PRCreation(updatedSession, storage, sessionManager, eventBroadcaster, stage4Prompt);
+  await spawnStage4PRCreation(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, stage4Prompt);
 }
 
 /**
@@ -377,6 +378,7 @@ async function spawnStage4PRCreation(
   session: Session,
   storage: FileStorageService,
   sessionManager: SessionManager,
+  resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined,
   prompt: string
 ): Promise<void> {
@@ -430,6 +432,19 @@ async function spawnStage4PRCreation(
 
       // Broadcast PR created event
       eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage4_complete');
+
+      // Auto-transition to Stage 5 and start PR review
+      console.log(`Auto-transitioning to Stage 5 for ${session.featureId}`);
+      const previousStage = session.currentStage;
+      const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 5);
+      eventBroadcaster?.stageChanged(updatedSession, previousStage);
+
+      // Read plan for Stage 5 prompt and auto-start review
+      const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+      if (plan) {
+        const stage5Prompt = buildStage5Prompt(updatedSession, plan, prInfo);
+        await spawnStage5PRReview(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
+      }
     } else {
       console.log(`Stage 4 completed but no PR_CREATED marker found for ${session.featureId}`);
       eventBroadcaster?.executionStatus(
@@ -452,6 +467,154 @@ async function spawnStage4PRCreation(
     console.error(`Stage 4 spawn error for ${session.featureId}:`, error);
     eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage4_spawn_error');
   });
+}
+
+/**
+ * Spawn Stage 5 PR Review Claude. Used by:
+ * - Auto-start after Stage 4 PR creation
+ * - Manual /transition endpoint
+ */
+async function spawnStage5PRReview(
+  session: Session,
+  storage: FileStorageService,
+  sessionManager: SessionManager,
+  resultHandler: ClaudeResultHandler,
+  eventBroadcaster: EventBroadcaster | undefined,
+  prompt: string
+): Promise<void> {
+  console.log(`Starting Stage 5 PR review for ${session.featureId}`);
+  const sessionDir = `${session.projectId}/${session.featureId}`;
+  const statusPath = `${sessionDir}/status.json`;
+
+  // Update status to running
+  const status = await storage.readJson<Record<string, unknown>>(statusPath);
+  if (status) {
+    status.status = 'running';
+    status.lastAction = 'stage5_started';
+    status.lastActionAt = new Date().toISOString();
+    await storage.writeJson(statusPath, status);
+  }
+
+  // Broadcast execution started
+  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage5_started');
+
+  // Spawn Claude with Stage 5 tools
+  orchestrator.spawn({
+    prompt,
+    projectPath: session.projectPath,
+    sessionId: session.claudeSessionId || undefined,
+    allowedTools: orchestrator.getStageTools(5),
+    onOutput: (output, isComplete) => {
+      eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
+    },
+  }).then(async (result) => {
+    // Handle Stage 5 result
+    await handleStage5Result(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
+  }).catch((error) => {
+    console.error(`Stage 5 spawn error for ${session.featureId}:`, error);
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage5_spawn_error');
+  });
+}
+
+/**
+ * Handle Stage 5 result - check for CI failures, review issues, or PR approval
+ */
+async function handleStage5Result(
+  session: Session,
+  result: ClaudeResult,
+  sessionDir: string,
+  storage: FileStorageService,
+  sessionManager: SessionManager,
+  resultHandler: ClaudeResultHandler,
+  eventBroadcaster: EventBroadcaster | undefined
+): Promise<void> {
+  const statusPath = `${sessionDir}/status.json`;
+
+  // Check for CI failure - requires return to Stage 2
+  if (result.parsed.ciFailed || result.parsed.returnToStage2) {
+    const reason = result.parsed.returnToStage2?.reason || 'CI checks failed';
+    console.log(`Stage 5 returning to Stage 2: ${reason}`);
+
+    // Transition back to Stage 2
+    const previousStage = session.currentStage;
+    const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 2);
+    eventBroadcaster?.stageChanged(updatedSession, previousStage);
+
+    // Update status
+    const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
+    if (finalStatus) {
+      finalStatus.status = 'idle';
+      finalStatus.lastAction = 'stage5_return_to_stage2';
+      finalStatus.lastActionAt = new Date().toISOString();
+      await storage.writeJson(statusPath, finalStatus);
+    }
+
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage5_return_to_stage2');
+    return;
+  }
+
+  // Check for PR approval
+  if (result.parsed.prApproved) {
+    console.log(`PR approved for ${session.featureId}`);
+
+    // Update status to completed
+    const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
+    if (finalStatus) {
+      finalStatus.status = 'idle';
+      finalStatus.lastAction = 'stage5_pr_approved';
+      finalStatus.lastActionAt = new Date().toISOString();
+      await storage.writeJson(statusPath, finalStatus);
+    }
+
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage5_pr_approved');
+    return;
+  }
+
+  // Check for review issues that need user decisions
+  if (result.parsed.decisions.length > 0) {
+    console.log(`Stage 5 found ${result.parsed.decisions.length} issues requiring user input`);
+
+    // Save questions for user to answer
+    const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+    await resultHandler['saveQuestions'](sessionDir, session, result.parsed.decisions, plan);
+
+    // Broadcast questions
+    const questionsPath = `${sessionDir}/questions.json`;
+    const questionsData = await storage.readJson<{ questions: Question[] }>(questionsPath);
+    if (questionsData && eventBroadcaster) {
+      const newQuestions = questionsData.questions.slice(-result.parsed.decisions.length);
+      eventBroadcaster.questionsAsked(session.projectId, session.featureId, newQuestions);
+    }
+
+    // Update status
+    const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
+    if (finalStatus) {
+      finalStatus.status = 'idle';
+      finalStatus.lastAction = 'stage5_awaiting_user';
+      finalStatus.lastActionAt = new Date().toISOString();
+      await storage.writeJson(statusPath, finalStatus);
+    }
+
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage5_awaiting_user');
+    return;
+  }
+
+  // No specific outcome detected
+  console.log(`Stage 5 completed for ${session.featureId} (no specific outcome detected)`);
+  const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
+  if (finalStatus) {
+    finalStatus.status = result.isError ? 'error' : 'idle';
+    finalStatus.lastAction = result.isError ? 'stage5_error' : 'stage5_complete';
+    finalStatus.lastActionAt = new Date().toISOString();
+    await storage.writeJson(statusPath, finalStatus);
+  }
+
+  eventBroadcaster?.executionStatus(
+    session.projectId,
+    session.featureId,
+    result.isError ? 'error' : 'idle',
+    result.isError ? 'stage5_error' : 'stage5_complete'
+  );
 }
 
 /**
@@ -750,7 +913,28 @@ export function createApp(
 
         // Build Stage 4 prompt and spawn PR creation
         const prompt = buildStage4Prompt(session, plan);
-        await spawnStage4PRCreation(session, storage, sessionManager, eventBroadcaster, prompt);
+        await spawnStage4PRCreation(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+      } else if (targetStage === 5) {
+        // If transitioning to Stage 5, spawn PR review
+        const sessionDir = `${projectId}/${featureId}`;
+
+        // Read current plan and PR info
+        const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+        const prInfo = await storage.readJson<{ title: string; branch: string; url: string }>(`${sessionDir}/pr.json`);
+
+        if (!plan) {
+          console.error(`No plan found for Stage 5 transition: ${featureId}`);
+          return;
+        }
+
+        if (!prInfo) {
+          console.error(`No PR info found for Stage 5 transition: ${featureId}`);
+          return;
+        }
+
+        // Build Stage 5 prompt and spawn PR review
+        const prompt = buildStage5Prompt(session, plan, prInfo);
+        await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to transition stage';

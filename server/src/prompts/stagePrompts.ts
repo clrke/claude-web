@@ -502,3 +502,144 @@ URL: {{prUrl}}
 4. Use \`gh pr create\` with --title and --body flags
 5. Return the PR URL in the output`;
 }
+
+/**
+ * Build Stage 5: PR Review prompt
+ * Reviews the PR with fresh eyes, checks CI status, and approves or returns to Stage 2.
+ * Per README lines 1797-1907
+ */
+export function buildStage5Prompt(session: Session, plan: Plan, prInfo: { title: string; branch: string; url: string }): string {
+  const planStepsText = plan.steps.map((step, i) => {
+    return `${i + 1}. [${step.id}] ${step.title}\n   ${step.description || 'No description'}`;
+  }).join('\n\n');
+
+  // Reference plan file for full context
+  const planFileReference = session.claudePlanFilePath
+    ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
+    : '';
+
+  return `You are reviewing a pull request. Be objective and thorough.
+
+IMPORTANT: You are reviewing this code with fresh eyes. Evaluate it as if you did not write it.
+
+## Feature
+Title: ${session.title}
+Description: ${session.featureDescription}
+Project Path: ${session.projectPath}
+
+## Implementation Plan
+${planStepsText}${planFileReference}
+
+## Pull Request
+Title: ${prInfo.title}
+Branch: ${prInfo.branch}
+URL: ${prInfo.url}
+
+## Instructions
+
+### Phase 1: Parallel Review (MANDATORY)
+Use the Task tool to spawn review agents in parallel:
+
+1. **Code Review Agent**: Review the git diff for issues
+   - Run: git diff main...HEAD
+   - Check: correctness, edge cases, error handling
+
+2. **Security Agent**: Check for security vulnerabilities
+   - Look for: injection risks, exposed secrets, auth issues
+   - Verify: input validation, output encoding
+
+3. **Test Coverage Agent**: Verify test adequacy
+   - Check: test files exist for new code
+   - Verify: edge cases and error paths tested
+
+4. **Integration Agent**: Check API contracts
+   - Verify: frontend-backend data shapes match
+   - Check: external API integrations
+
+5. **CI Agent**: Poll CI status
+   - Run: gh pr checks (get PR number from URL)
+   - Wait for checks to complete
+   - Report pass/fail status
+
+Wait for ALL agents to complete before proceeding.
+
+### Phase 2: Compile Findings
+Batch all findings into a review checkpoint:
+
+\`\`\`
+[REVIEW_CHECKPOINT]
+## Review Findings
+
+[DECISION_NEEDED priority="1" category="critical" file="path/to/file.ts" line="42"]
+Issue: Critical problem that must be fixed before merge.
+Impact: What could go wrong in production.
+
+How should we fix this?
+- Option A: Recommended fix approach (recommended)
+- Option B: Alternative fix approach
+[/DECISION_NEEDED]
+
+[DECISION_NEEDED priority="2" category="major" file="path/to/file.ts" line="88"]
+Issue: Important issue that should be addressed.
+Impact: Affects code quality or maintainability.
+
+How should we handle this?
+- Option A: Fix now before merge (recommended)
+- Option B: Create follow-up ticket
+- Option C: Accept as-is with justification
+[/DECISION_NEEDED]
+[/REVIEW_CHECKPOINT]
+\`\`\`
+
+### Phase 3: Report CI Status
+Always report CI status:
+
+\`\`\`
+[CI_STATUS status="passing|failing|pending"]
+Check Name: Status
+Check Name: Status
+[/CI_STATUS]
+\`\`\`
+
+### Phase 4: Decision
+Based on findings and CI status:
+
+**If CI is failing:**
+\`\`\`
+[CI_FAILED]
+The following CI checks are failing:
+- Check name: Error message
+
+This requires returning to Stage 2 to fix the issues.
+[/CI_FAILED]
+\`\`\`
+
+**If issues found that require fixes:**
+Present as \`[DECISION_NEEDED]\` blocks and wait for user response.
+If user chooses to fix, output:
+\`\`\`
+[RETURN_TO_STAGE_2]
+Reason: Brief description of what needs to be fixed
+[/RETURN_TO_STAGE_2]
+\`\`\`
+
+**If CI passes and no blocking issues:**
+\`\`\`
+[PR_APPROVED]
+The PR is ready to merge. All CI checks passing.
+
+Summary:
+- X files changed
+- All tests passing
+- No security issues found
+- Code follows project patterns
+[/PR_APPROVED]
+\`\`\`
+
+### Important Rules
+1. Be objective - review as if you didn't write the code
+2. Check CI status before approving
+3. Present issues as prioritized decisions
+4. CI failures MUST return to Stage 2
+5. Only output PR_APPROVED when CI passes AND no blocking issues`;
+}
