@@ -688,35 +688,36 @@ async function executeSingleStep(
           }
         );
 
-        // If Haiku found blockers, save them and mark as blocked
+        // If Haiku found blockers, redirect to Stage 2 with blocker context
         if (extractionResult.questions && extractionResult.questions.length > 0) {
-          console.log(`Haiku extracted ${extractionResult.questions.length} blocker(s) from incomplete step ${step.id}`);
-          const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
-          await resultHandler['saveQuestions'](sessionDir, session, extractionResult.questions, plan, step.id);
+          console.log(`Haiku extracted ${extractionResult.questions.length} blocker(s) from incomplete step ${step.id}, redirecting to Stage 2`);
 
-          // Broadcast the extracted blockers
-          if (eventBroadcaster) {
-            const questionsPath = `${sessionDir}/questions.json`;
-            const questionsData = await storage.readJson<{ questions: Question[] }>(questionsPath);
-            if (questionsData) {
-              const newBlockers = questionsData.questions.filter(
-                q => !q.answeredAt && extractionResult.questions?.some(eq => eq.questionText === q.questionText)
-              );
-              if (newBlockers.length > 0) {
-                eventBroadcaster.questionsAsked(session.projectId, session.featureId, newBlockers);
-              }
-            }
-          }
+          // Build blocker context for Stage 2
+          const blockerSummary = extractionResult.questions
+            .map((q, i) => `${i + 1}. ${q.questionText}`)
+            .join('\n');
 
-          // Update status to indicate blocker found via Haiku
-          const statusPath2 = `${sessionDir}/status.json`;
-          const status2 = await storage.readJson<Record<string, unknown>>(statusPath2);
-          if (status2) {
-            status2.blockedStepId = step.id;
-            status2.lastAction = 'step_blocked_haiku';
-            status2.lastActionAt = new Date().toISOString();
-            await storage.writeJson(statusPath2, status2);
-          }
+          const blockerContext = `Step ${step.id} (${step.title}) encountered the following issue(s) that need to be addressed in the plan:\n\n${blockerSummary}\n\nPlease review and update the plan to address these issues. You may need to:\n1. Add prerequisite steps\n2. Provide more detailed instructions\n3. Break this step into smaller steps\n4. Clarify any ambiguous requirements`;
+
+          // Transition to Stage 2
+          const previousStage = session.currentStage;
+          const updatedSession = await sessionManager.transitionStage(
+            session.projectId, session.featureId, 2
+          );
+          eventBroadcaster?.stageChanged(updatedSession, previousStage);
+          eventBroadcaster?.executionStatus(
+            session.projectId, session.featureId, 'idle', 'stage2_blocker_review'
+          );
+
+          // Spawn Stage 2 review with blocker context
+          spawnStage2Review(
+            updatedSession,
+            storage,
+            sessionManager,
+            resultHandler,
+            eventBroadcaster,
+            blockerContext
+          );
 
           resolve({
             stepCompleted: false,
@@ -726,23 +727,64 @@ async function executeSingleStep(
           return;
         }
 
-        // No blocker found - this step might need replanning
-        // Mark step as needs_review and return to Stage 2
-        console.log(`Step ${step.id} incomplete with no extractable blocker, marking for review for ${session.featureId}`);
-        const planPath = `${sessionDir}/plan.json`;
-        const currentPlan = await storage.readJson<Plan>(planPath);
-        if (currentPlan) {
-          const stepToUpdate = currentPlan.steps.find(s => s.id === step.id);
-          if (stepToUpdate) {
-            stepToUpdate.status = 'needs_review';
-            stepToUpdate.metadata = {
-              ...stepToUpdate.metadata,
-              incompleteReason: 'Step did not complete and no blocker was identified',
-              lastOutput: result.output.slice(-500), // Last 500 chars for context
-            };
-            await storage.writeJson(planPath, currentPlan);
+        // No blocker found - retry the step with additional context
+        console.log(`Step ${step.id} incomplete with no extractable blocker, retrying with context for ${session.featureId}`);
+
+        // Track retry count
+        const statusPath3 = `${sessionDir}/status.json`;
+        const status3 = await storage.readJson<Record<string, unknown>>(statusPath3);
+        const stepRetries = (status3?.stepRetries as Record<string, number>) || {};
+        const currentRetries = stepRetries[step.id] || 0;
+
+        if (currentRetries >= 2) {
+          // Max retries reached - now go to Stage 2 for replanning
+          console.log(`Step ${step.id} failed after ${currentRetries + 1} attempts, returning to Stage 2`);
+
+          const planPath = `${sessionDir}/plan.json`;
+          const currentPlan = await storage.readJson<Plan>(planPath);
+          if (currentPlan) {
+            const stepToUpdate = currentPlan.steps.find(s => s.id === step.id);
+            if (stepToUpdate) {
+              stepToUpdate.status = 'needs_review';
+              stepToUpdate.metadata = {
+                ...stepToUpdate.metadata,
+                incompleteReason: `Step failed after ${currentRetries + 1} attempts`,
+                lastOutput: result.output.slice(-500),
+              };
+              await storage.writeJson(planPath, currentPlan);
+            }
           }
+
+          resolve({
+            stepCompleted: false,
+            hasBlocker: false,
+            sessionId: capturedSessionId,
+          });
+          return;
         }
+
+        // Update retry count
+        stepRetries[step.id] = currentRetries + 1;
+        if (status3) {
+          status3.stepRetries = stepRetries;
+          status3.lastAction = 'step_retry';
+          status3.lastActionAt = new Date().toISOString();
+          await storage.writeJson(statusPath3, status3);
+        }
+
+        // Build retry context from the incomplete output
+        const retryContext = `Previous attempt did not complete successfully. Here's what happened:\n\n${result.output.slice(-1000)}\n\nPlease complete this step. Make sure to:\n1. Finish any incomplete work\n2. Run tests if applicable\n3. Commit your changes with "Step ${step.id}: <description>"`;
+
+        console.log(`Retrying step ${step.id} (attempt ${currentRetries + 2}) for ${session.featureId}`);
+
+        // Re-execute the step with retry context
+        const retryResult = await executeSingleStep(
+          session, plan, step, storage, sessionManager,
+          resultHandler, eventBroadcaster, retryContext
+        );
+
+        resolve(retryResult);
+        return;
       }
 
       // Broadcast step completed if applicable
