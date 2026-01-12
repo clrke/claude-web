@@ -7,7 +7,7 @@ import { DecisionValidator, ValidationLog } from './DecisionValidator';
 import { OutputParser, ParsedPlanStep } from './OutputParser';
 import { PostProcessingType } from './HaikuPostProcessor';
 import { Session, Plan, Question, QuestionStage, QuestionCategory } from '@claude-code-web/shared';
-import { isImplementationComplete } from '../utils/stateVerification';
+import { isImplementationComplete, hasNewCommitSince } from '../utils/stateVerification';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
   1: 'discovery',
@@ -188,7 +188,8 @@ export class ClaudeResultHandler {
     session: Session,
     result: ClaudeResult,
     prompt: string,
-    stepId?: string
+    stepId?: string,
+    preStepCommitSha?: string
   ): Promise<{ hasBlocker: boolean; implementationComplete: boolean }> {
     const sessionDir = `${session.projectId}/${session.featureId}`;
     const now = new Date().toISOString();
@@ -206,6 +207,21 @@ export class ClaudeResultHandler {
       error: result.error,
       parsed: result.parsed,
     });
+
+    // Deterministic step completion: check if a git commit was made
+    // This is more reliable than parsing Claude's output for markers
+    if (stepId && preStepCommitSha && session.projectPath) {
+      const hasNewCommit = await hasNewCommitSince(session.projectPath, preStepCommitSha);
+      if (hasNewCommit && !result.parsed.stepsCompleted.some(s => s.id === stepId)) {
+        console.log(`Step ${stepId} completed via git commit detection for ${session.featureId}`);
+        result.parsed.stepsCompleted.push({
+          id: stepId,
+          summary: 'Completed (verified by git commit)',
+          testsAdded: [],
+          testsPassing: true,
+        });
+      }
+    }
 
     // Update plan step statuses based on stepsCompleted
     if (result.parsed.stepsCompleted.length > 0) {

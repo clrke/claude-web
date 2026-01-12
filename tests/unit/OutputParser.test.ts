@@ -293,6 +293,75 @@ Last step done
         summary: 'Last step done',
       });
     });
+
+    it('should detect plain text "**Step X Complete**" pattern', () => {
+      const input = `
+**Step 10 Complete**
+
+I've completed the GPS Tracking Vue component tests. Here's a summary:
+
+## What was done:
+- Added 43 test cases
+`;
+      const result = parser.parse(input);
+
+      expect(result.stepsCompleted).toHaveLength(1);
+      expect(result.stepsCompleted[0].id).toBe('10');
+      expect(result.stepsCompleted[0].summary).toContain('completed the GPS Tracking');
+    });
+
+    it('should detect plain text "## Step X Complete" pattern', () => {
+      const input = `
+## Step 5 Complete
+
+Implementation finished successfully.
+`;
+      const result = parser.parse(input);
+
+      expect(result.stepsCompleted).toHaveLength(1);
+      expect(result.stepsCompleted[0].id).toBe('5');
+    });
+
+    it('should detect "Step X Done" pattern', () => {
+      const input = `
+Step 3 Done
+
+All tests passing.
+`;
+      const result = parser.parse(input);
+
+      expect(result.stepsCompleted).toHaveLength(1);
+      expect(result.stepsCompleted[0].id).toBe('3');
+    });
+
+    it('should not duplicate if both formal marker and plain text exist', () => {
+      const input = `
+**Step 5 Complete**
+
+[STEP_COMPLETE id="5"]
+Summary here
+[/STEP_COMPLETE]
+`;
+      const result = parser.parse(input);
+
+      // Should only have one entry, not duplicated
+      expect(result.stepsCompleted).toHaveLength(1);
+      expect(result.stepsCompleted[0].id).toBe('5');
+      // Formal marker should take precedence (has summary)
+      expect(result.stepsCompleted[0].summary).toBe('Summary here');
+    });
+
+    it('should detect step-X format IDs in plain text', () => {
+      const input = `
+**Step step-3 Complete**
+
+Done with step 3.
+`;
+      const result = parser.parse(input);
+
+      expect(result.stepsCompleted).toHaveLength(1);
+      expect(result.stepsCompleted[0].id).toBe('step-3');
+    });
   });
 
   describe('escaped quotes in attributes', () => {

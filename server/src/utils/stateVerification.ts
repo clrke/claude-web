@@ -135,3 +135,37 @@ export function getUnansweredQuestions(questionsFile: QuestionsFile | null, stag
 
   return questionsFile.questions.filter(q => q.stage === stage && q.answeredAt === null);
 }
+
+/**
+ * Get current HEAD commit SHA for a project
+ */
+export async function getHeadCommitSha(projectPath: string): Promise<string | null> {
+  const { execFile } = await import('child_process');
+  const { promisify } = await import('util');
+  const execFileAsync = promisify(execFile);
+
+  try {
+    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+      cwd: projectPath,
+    });
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if a new commit was made since the given SHA.
+ * Returns true if HEAD is different from the provided SHA.
+ *
+ * This is a deterministic way to verify step completion -
+ * if Claude made a commit, the step is complete.
+ */
+export async function hasNewCommitSince(projectPath: string, previousSha: string | null): Promise<boolean> {
+  if (!previousSha) {
+    return false;
+  }
+
+  const currentSha = await getHeadCommitSha(projectPath);
+  return currentSha !== null && currentSha !== previousSha;
+}

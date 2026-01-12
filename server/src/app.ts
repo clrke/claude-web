@@ -26,6 +26,7 @@ import {
   isPlanApproved,
   isImplementationComplete,
   getStepCounts,
+  getHeadCommitSha,
 } from './utils/stateVerification';
 import * as packageJson from '../package.json';
 
@@ -610,6 +611,9 @@ async function executeSingleStep(
   // Save "started" conversation entry
   await resultHandler.saveConversationStart(sessionDir, 3, prompt, step.id);
 
+  // Capture HEAD SHA before spawning Claude for deterministic completion verification
+  const preStepCommitSha = await getHeadCommitSha(session.projectPath);
+
   // Determine which sessionId to use
   // First step of Stage 3: don't resume (fresh session)
   // Subsequent steps: resume with Stage 3 sessionId
@@ -659,9 +663,9 @@ async function executeSingleStep(
         session.claudeStage3SessionId = capturedSessionId;
       }
 
-      // Handle Stage 3 result with stepId
+      // Handle Stage 3 result with stepId and pre-step commit SHA for git-based verification
       const { hasBlocker, implementationComplete } = await resultHandler.handleStage3Result(
-        session, result, prompt, step.id
+        session, result, prompt, step.id, preStepCommitSha || undefined
       );
 
       // Check if this step was completed

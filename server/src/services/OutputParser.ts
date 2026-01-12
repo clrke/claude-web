@@ -196,10 +196,12 @@ export class OutputParser {
 
   private parseAllStepsComplete(input: string): ParsedStepComplete[] {
     const steps: ParsedStepComplete[] = [];
-    const regex = /\[STEP_COMPLETE\s+id="([^"]+)"\]([\s\S]*?)\[\/STEP_COMPLETE\]/g;
+    const seenIds = new Set<string>();
 
+    // Primary: Parse formal [STEP_COMPLETE] markers
+    const formalRegex = /\[STEP_COMPLETE\s+id="([^"]+)"\]([\s\S]*?)\[\/STEP_COMPLETE\]/g;
     let match;
-    while ((match = regex.exec(input)) !== null) {
+    while ((match = formalRegex.exec(input)) !== null) {
       const content = match[2].trim();
 
       // Parse tests added (e.g., "Tests added: file1.spec.ts, file2.spec.ts")
@@ -214,12 +216,42 @@ export class OutputParser {
         ? ['yes', 'true'].includes(passingMatch[1].toLowerCase())
         : true; // Assume passing if not specified
 
+      seenIds.add(match[1]);
       steps.push({
         id: match[1],
         summary: content,
         testsAdded,
         testsPassing,
       });
+    }
+
+    // Fallback: Detect plain text patterns like "Step X Complete" or "**Step X Complete**"
+    // This handles cases where Claude doesn't use the formal marker format
+    const plainTextPatterns = [
+      /(?:^|\n)#+\s*\*?\*?Step\s+(\d+|[a-z]+-\d+)\s+(?:Complete|Completed|Done)\*?\*?\s*(?:\n|$)/gi,
+      /(?:^|\n)\*?\*?Step\s+(\d+|[a-z]+-\d+)\s+(?:Complete|Completed|Done)\*?\*?\s*(?:\n|$)/gi,
+    ];
+
+    for (const pattern of plainTextPatterns) {
+      let plainMatch;
+      while ((plainMatch = pattern.exec(input)) !== null) {
+        const stepId = plainMatch[1];
+        // Don't duplicate if already found via formal marker
+        if (!seenIds.has(stepId)) {
+          seenIds.add(stepId);
+          // Try to extract summary from surrounding context (next ~500 chars)
+          const startPos = plainMatch.index + plainMatch[0].length;
+          const contextEnd = Math.min(startPos + 500, input.length);
+          const context = input.slice(startPos, contextEnd).split(/\n(?:#+\s|\*\*Step|\[STEP)/)[0].trim();
+
+          steps.push({
+            id: stepId,
+            summary: context || `Step ${stepId} completed`,
+            testsAdded: [],
+            testsPassing: true, // Assume passing if using informal completion
+          });
+        }
+      }
     }
 
     return steps;
