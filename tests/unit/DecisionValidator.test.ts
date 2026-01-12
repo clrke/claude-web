@@ -113,6 +113,41 @@ describe('DecisionValidator', () => {
       expect(result.repurposedQuestions![0].questionText).toBe('What level of type safety is needed?');
     });
 
+    it('should repurpose with nested options array', async () => {
+      const resultPromise = validator.validateDecision(mockDecision, mockPlan, '/project');
+
+      // Complex repurpose with nested options array (tests proper JSON parsing)
+      const repurposeJson = {
+        action: 'repurpose',
+        reason: 'The concern is valid but framing is wrong',
+        questions: [{
+          questionText: 'Should we add comprehensive test coverage now?',
+          category: 'approach',
+          priority: 2,
+          options: [
+            { label: 'Add tests now (Recommended)', recommended: true, description: 'Write tests immediately' },
+            { label: 'Integrate first, test after', recommended: false, description: 'Complete integration first' }
+          ]
+        }]
+      };
+
+      const response = JSON.stringify({
+        result: JSON.stringify(repurposeJson),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.action).toBe('repurpose');
+      expect(result.repurposedQuestions).toHaveLength(1);
+      expect(result.repurposedQuestions![0].questionText).toBe('Should we add comprehensive test coverage now?');
+      expect(result.repurposedQuestions![0].options).toHaveLength(2);
+      expect(result.repurposedQuestions![0].options[0].label).toBe('Add tests now (Recommended)');
+      expect(result.repurposedQuestions![0].options[0].recommended).toBe(true);
+      expect(result.repurposedQuestions![0].options[0].description).toBe('Write tests immediately');
+    });
+
     it('should pass conservatively on timeout', async () => {
       jest.useFakeTimers();
 

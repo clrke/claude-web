@@ -201,47 +201,108 @@ export class DecisionValidator {
   }
 
   /**
+   * Extract a complete JSON object from a string, properly handling nested braces.
+   */
+  private extractCompleteJson(str: string, startIndex: number): string | null {
+    if (str[startIndex] !== '{') return null;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = startIndex; i < str.length; i++) {
+      const char = str[i];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (char === '{') depth++;
+      else if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          return str.substring(startIndex, i + 1);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Parse validation response, handling repurpose with nested questions.
    */
   private parseValidationResponse(
     fullResult: string,
     jsonStart: string
   ): { action: ValidationAction; reason: string; questions?: ParsedDecision[] } {
-    // For repurpose, we need to find the complete JSON including the questions array
-    // Try to find a more complete JSON object
-    const repurposeMatch = fullResult.match(
-      /\{[\s\S]*?"action"\s*:\s*"repurpose"[\s\S]*?"questions"\s*:\s*\[[\s\S]*?\]\s*\}/
-    );
+    // For repurpose, find the JSON object containing "action": "repurpose"
+    const repurposeIndex = fullResult.indexOf('"action"');
+    if (repurposeIndex >= 0) {
+      // Find the start of the containing object
+      let objectStart = repurposeIndex;
+      while (objectStart > 0 && fullResult[objectStart] !== '{') {
+        objectStart--;
+      }
 
-    if (repurposeMatch) {
-      try {
-        const parsed = JSON.parse(repurposeMatch[0]);
-        const questions: ParsedDecision[] = (parsed.questions || []).map((q: {
-          questionText?: string;
-          category?: string;
-          priority?: number;
-          options?: Array<{ label: string; recommended?: boolean }>;
-        }) => ({
-          questionText: q.questionText || '',
-          category: q.category || 'technical',
-          priority: q.priority || 2,
-          options: (q.options || []).map((o) => ({
-            label: o.label,
-            recommended: Boolean(o.recommended),
-          })),
-        }));
+      if (fullResult[objectStart] === '{') {
+        const completeJson = this.extractCompleteJson(fullResult, objectStart);
+        if (completeJson) {
+          try {
+            const parsed = JSON.parse(completeJson);
 
-        return {
-          action: 'repurpose',
-          reason: parsed.reason || 'Question repurposed',
-          questions: questions.length > 0 ? questions : undefined,
-        };
-      } catch {
-        // Fall through to simple parsing
+            if (parsed.action === 'repurpose' && parsed.questions) {
+              const questions: ParsedDecision[] = (parsed.questions || []).map((q: {
+                questionText?: string;
+                category?: string;
+                priority?: number;
+                options?: Array<{ label: string; recommended?: boolean; description?: string }>;
+              }) => ({
+                questionText: q.questionText || '',
+                category: q.category || 'technical',
+                priority: q.priority || 2,
+                options: (q.options || []).map((o) => ({
+                  label: o.label,
+                  recommended: Boolean(o.recommended),
+                  description: o.description,
+                })),
+              }));
+
+              return {
+                action: 'repurpose',
+                reason: parsed.reason || 'Question repurposed',
+                questions: questions.length > 0 ? questions : undefined,
+              };
+            }
+
+            // Handle pass/filter
+            if (parsed.action === 'pass' || parsed.action === 'filter') {
+              return {
+                action: parsed.action,
+                reason: parsed.reason || 'No reason provided',
+              };
+            }
+          } catch {
+            // Fall through to simple parsing
+          }
+        }
       }
     }
 
-    // Simple parsing for pass/filter
+    // Simple parsing fallback
     try {
       const simple = JSON.parse(jsonStart);
       const action = simple.action as ValidationAction;
