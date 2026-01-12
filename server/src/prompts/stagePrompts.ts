@@ -658,19 +658,14 @@ Based on the review, prepare:
    - Automated test coverage summary
    - Edge cases to verify
 
-### Phase 3: Prepare Git State (MANDATORY)
-Before creating the PR, ensure the repository is in the correct state:
+### Phase 3: Verify Git State
+**NOTE:** Git operations (checkout, commit, push) have already been performed automatically.
 
-1. **Verify branch**: Check current branch with \`git branch --show-current\`
-   - If NOT on \`${session.featureBranch}\`, checkout: \`git checkout ${session.featureBranch}\`
-   - If branch doesn't exist, create it: \`git checkout -b ${session.featureBranch}\`
+1. **Verify branch is pushed**: Run \`git log origin/${session.featureBranch} -1 --oneline\`
+   - This confirms the branch exists on the remote
+   - If this fails, there may be an issue - report it
 
-2. **Commit any uncommitted changes**: Run \`git status\`
-   - If there are staged/unstaged changes, commit them with a descriptive message
-   - Use: \`git add -A && git commit -m "feat: <description>"\`
-
-3. **Push to remote**: \`git push -u origin ${session.featureBranch}\`
-   - This ensures the branch exists on the remote before creating the PR
+2. **Skip manual git push** - already done by the system
 
 ### Phase 4: Create or Update the PR
 1. Check if PR already exists: \`gh pr list --head ${session.featureBranch}\`
@@ -703,13 +698,12 @@ URL: {{prUrl}}
 \`\`\`
 
 ### Important Rules
-1. ALWAYS verify you're on the correct feature branch before any git operations
-2. ALWAYS commit and push changes before creating/updating the PR
-3. Review changes BEFORE creating the PR
-4. Include a clear, actionable test plan
-5. Reference the original feature description
-6. Update existing PR if one exists, otherwise create new
-7. Return the PR URL in the output`;
+1. Git push has already been performed - do NOT run git push again
+2. Review changes BEFORE creating the PR
+3. Include a clear, actionable test plan
+4. Reference the original feature description
+5. Update existing PR if one exists, otherwise create new
+6. Return the PR URL in the output`;
 }
 
 /**

@@ -367,6 +367,13 @@ async function handleStage2Completion(
   resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined
 ): Promise<void> {
+  // Re-fetch current session state to avoid stale data
+  const currentSession = await sessionManager.getSession(session.projectId, session.featureId);
+  if (currentSession && currentSession.currentStage >= 3) {
+    console.log(`Session ${session.featureId} already at Stage ${currentSession.currentStage}, skipping Stage 2 completion`);
+    return;
+  }
+
   // Load plan and questions for state-based verification
   const planPath = `${sessionDir}/plan.json`;
   const questionsPath = `${sessionDir}/questions.json`;
@@ -856,6 +863,20 @@ async function executeStage3Steps(
 
   console.log(`Starting Stage 3 step-by-step execution for ${session.featureId}`);
 
+  // Convert any 'needs_review' steps to 'pending' at the start of Stage 3
+  // This handles the transition from Stage 2 planning to Stage 3 implementation
+  let stepsConverted = false;
+  for (const step of plan.steps) {
+    if (step.status === 'needs_review') {
+      step.status = 'pending';
+      stepsConverted = true;
+    }
+  }
+  if (stepsConverted) {
+    await storage.writeJson(`${sessionDir}/plan.json`, plan);
+    console.log(`Converted needs_review steps to pending for ${session.featureId}`);
+  }
+
   // If resuming a specific step (after blocker answer), find and execute that step
   if (resumeStepId) {
     const resumeStep = plan.steps.find(s => s.id === resumeStepId);
@@ -1019,6 +1040,91 @@ async function handleStage3Completion(
 }
 
 /**
+ * Perform deterministic git operations before Stage 4 PR creation.
+ * This ensures git state is correct without relying on Claude.
+ *
+ * Operations performed:
+ * 1. Checkout feature branch (create if needed)
+ * 2. Stage and commit any uncommitted changes
+ * 3. Push to remote with -u flag
+ *
+ * Returns { success: boolean, error?: string, pushed?: boolean }
+ */
+async function prepareGitForPR(
+  projectPath: string,
+  featureBranch: string,
+  eventBroadcaster: EventBroadcaster | undefined,
+  projectId: string,
+  featureId: string
+): Promise<{ success: boolean; error?: string; pushed?: boolean }> {
+  const { execSync } = await import('child_process');
+
+  const runGit = (cmd: string): string => {
+    try {
+      return execSync(cmd, { cwd: projectPath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    } catch (error) {
+      const err = error as { stderr?: Buffer; message?: string };
+      throw new Error(err.stderr?.toString() || err.message || 'Git command failed');
+    }
+  };
+
+  try {
+    console.log(`[Stage 4] Preparing git state for ${featureId}...`);
+    eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage4_git_prep');
+
+    // 1. Check current branch
+    const currentBranch = runGit('git branch --show-current');
+    console.log(`[Stage 4] Current branch: ${currentBranch}`);
+
+    // 2. Checkout feature branch if not already on it
+    if (currentBranch !== featureBranch) {
+      try {
+        runGit(`git checkout ${featureBranch}`);
+        console.log(`[Stage 4] Checked out ${featureBranch}`);
+      } catch {
+        // Branch might not exist, create it
+        runGit(`git checkout -b ${featureBranch}`);
+        console.log(`[Stage 4] Created and checked out ${featureBranch}`);
+      }
+    }
+
+    // 3. Check for uncommitted changes
+    const status = runGit('git status --porcelain');
+    if (status) {
+      console.log(`[Stage 4] Found uncommitted changes, committing...`);
+      runGit('git add -A');
+      try {
+        runGit('git commit -m "feat: final changes before PR"');
+        console.log(`[Stage 4] Committed changes`);
+      } catch (e) {
+        // Might fail if nothing to commit (all changes already staged)
+        console.log(`[Stage 4] Nothing to commit: ${e}`);
+      }
+    }
+
+    // 4. Push to remote
+    console.log(`[Stage 4] Pushing to origin/${featureBranch}...`);
+    try {
+      runGit(`git push -u origin ${featureBranch}`);
+      console.log(`[Stage 4] Pushed to remote`);
+    } catch (pushError) {
+      // Try force push if regular push fails (e.g., diverged history)
+      console.log(`[Stage 4] Regular push failed, trying with --force-with-lease...`);
+      runGit(`git push -u origin ${featureBranch} --force-with-lease`);
+      console.log(`[Stage 4] Force pushed to remote`);
+    }
+
+    console.log(`[Stage 4] Git preparation complete for ${featureId}`);
+    return { success: true, pushed: true };
+
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Git preparation failed';
+    console.error(`[Stage 4] Git preparation failed for ${featureId}:`, message);
+    return { success: false, error: message };
+  }
+}
+
+/**
  * Spawn Stage 4 PR Creation Claude. Used by:
  * - Auto-start after Stage 3 implementation complete
  * - Manual /transition endpoint
@@ -1047,10 +1153,34 @@ async function spawnStage4PRCreation(
   // Broadcast execution started
   eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage4_started');
 
+  // DETERMINISTIC: Prepare git state before Claude (checkout, commit, push)
+  const gitResult = await prepareGitForPR(
+    session.projectPath,
+    session.featureBranch,
+    eventBroadcaster,
+    session.projectId,
+    session.featureId
+  );
+
+  if (!gitResult.success) {
+    console.error(`[Stage 4] Git preparation failed, aborting PR creation: ${gitResult.error}`);
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage4_git_error');
+
+    const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
+    if (finalStatus) {
+      finalStatus.status = 'error';
+      finalStatus.lastAction = 'stage4_git_error';
+      finalStatus.lastActionAt = new Date().toISOString();
+      finalStatus.lastError = gitResult.error;
+      await storage.writeJson(statusPath, finalStatus);
+    }
+    return;
+  }
+
   // Save "started" conversation entry immediately
   await resultHandler.saveConversationStart(sessionDir, 4, prompt);
 
-  // Spawn Claude with Stage 4 tools (git and gh commands)
+  // Spawn Claude with Stage 4 tools (git and gh commands) - git push already done
   orchestrator.spawn({
     prompt,
     projectPath: session.projectPath,
@@ -2512,6 +2642,50 @@ After creating all steps, write the plan to a file and output:
       res.json(conversations || { entries: [] });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to get conversations';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Restart Stage 3 execution (for stuck sessions)
+  app.post('/api/sessions/:projectId/:featureId/restart-stage3', async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+
+      // Get session
+      const session = await sessionManager.getSession(projectId, featureId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      // Verify we're in Stage 3
+      if (session.currentStage !== 3) {
+        return res.status(400).json({ error: `Session is at Stage ${session.currentStage}, not Stage 3` });
+      }
+
+      const sessionDir = `${projectId}/${featureId}`;
+
+      // Read plan
+      const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+      if (!plan) {
+        return res.status(404).json({ error: 'No plan found' });
+      }
+
+      // Verify plan is approved
+      if (!plan.isApproved) {
+        return res.status(400).json({ error: 'Plan not approved' });
+      }
+
+      // Return success immediately
+      res.json({ message: 'Stage 3 execution restarted', featureId });
+
+      // Start Stage 3 step-by-step execution (fire-and-forget)
+      executeStage3Steps(session, storage, sessionManager, resultHandler, eventBroadcaster)
+        .catch(err => {
+          console.error('Stage 3 restart error:', err);
+          eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage3_restart_error');
+        });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to restart Stage 3';
       res.status(500).json({ error: message });
     }
   });
