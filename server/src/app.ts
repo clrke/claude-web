@@ -473,19 +473,38 @@ async function spawnStage4PRCreation(
       }
     } else {
       console.log(`Stage 4 completed but no PR_CREATED marker found for ${session.featureId}`);
+
+      // Still save the conversation even without PR_CREATED marker
+      const conversationsPath = `${sessionDir}/conversations.json`;
+      const conversations = await storage.readJson<{ entries: unknown[] }>(conversationsPath) || { entries: [] };
+      conversations.entries.push({
+        stage: 4,
+        timestamp: new Date().toISOString(),
+        prompt: prompt,
+        output: result.output,
+        sessionId: result.sessionId,
+        costUsd: result.costUsd,
+        isError: result.isError || true, // Mark as error since no PR was created
+        error: 'No PR_CREATED marker found in output',
+        parsed: result.parsed,
+        status: 'completed',
+      });
+      await storage.writeJson(conversationsPath, conversations);
+
       eventBroadcaster?.executionStatus(
         session.projectId,
         session.featureId,
-        result.isError ? 'error' : 'idle',
-        result.isError ? 'stage4_error' : 'stage4_complete'
+        'error',
+        'stage4_no_pr_marker'
       );
     }
 
-    // Update status
+    // Update status (mark as error if no PR_CREATED marker)
+    const hasPR = !!result.output.match(/\[PR_CREATED\]/);
     const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
     if (finalStatus) {
-      finalStatus.status = result.isError ? 'error' : 'idle';
-      finalStatus.lastAction = result.isError ? 'stage4_error' : 'stage4_complete';
+      finalStatus.status = (result.isError || !hasPR) ? 'error' : 'idle';
+      finalStatus.lastAction = result.isError ? 'stage4_error' : (!hasPR ? 'stage4_no_pr_marker' : 'stage4_complete');
       finalStatus.lastActionAt = new Date().toISOString();
       await storage.writeJson(statusPath, finalStatus);
     }
