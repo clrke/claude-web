@@ -669,7 +669,81 @@ async function executeSingleStep(
       );
 
       // Check if this step was completed
-      const stepCompleted = result.parsed.stepsCompleted.some(s => s.id === step.id);
+      let stepCompleted = result.parsed.stepsCompleted.some(s => s.id === step.id);
+
+      // If step not completed and no blocker detected, try Haiku post-processing
+      // to extract any implicit blockers from Claude's output
+      if (!stepCompleted && !hasBlocker && result.output.length > 100) {
+        console.log(`Step ${step.id} incomplete without blocker, attempting Haiku extraction for ${session.featureId}`);
+
+        const extractionResult = await haikuPostProcessor.smartExtract(
+          result.output,
+          session.projectPath,
+          {
+            stage: 3,
+            hasDecisions: result.parsed.decisions.length > 0,
+            hasPlanSteps: false,
+            hasImplementationStatus: result.parsed.implementationStatus !== null,
+            hasPRCreated: false,
+          }
+        );
+
+        // If Haiku found blockers, save them and mark as blocked
+        if (extractionResult.questions && extractionResult.questions.length > 0) {
+          console.log(`Haiku extracted ${extractionResult.questions.length} blocker(s) from incomplete step ${step.id}`);
+          const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+          await resultHandler['saveQuestions'](sessionDir, session, extractionResult.questions, plan, step.id);
+
+          // Broadcast the extracted blockers
+          if (eventBroadcaster) {
+            const questionsPath = `${sessionDir}/questions.json`;
+            const questionsData = await storage.readJson<{ questions: Question[] }>(questionsPath);
+            if (questionsData) {
+              const newBlockers = questionsData.questions.filter(
+                q => !q.answeredAt && extractionResult.questions?.some(eq => eq.questionText === q.questionText)
+              );
+              if (newBlockers.length > 0) {
+                eventBroadcaster.questionsAsked(session.projectId, session.featureId, newBlockers);
+              }
+            }
+          }
+
+          // Update status to indicate blocker found via Haiku
+          const statusPath2 = `${sessionDir}/status.json`;
+          const status2 = await storage.readJson<Record<string, unknown>>(statusPath2);
+          if (status2) {
+            status2.blockedStepId = step.id;
+            status2.lastAction = 'step_blocked_haiku';
+            status2.lastActionAt = new Date().toISOString();
+            await storage.writeJson(statusPath2, status2);
+          }
+
+          resolve({
+            stepCompleted: false,
+            hasBlocker: true,
+            sessionId: capturedSessionId,
+          });
+          return;
+        }
+
+        // No blocker found - this step might need replanning
+        // Mark step as needs_review and return to Stage 2
+        console.log(`Step ${step.id} incomplete with no extractable blocker, marking for review for ${session.featureId}`);
+        const planPath = `${sessionDir}/plan.json`;
+        const currentPlan = await storage.readJson<Plan>(planPath);
+        if (currentPlan) {
+          const stepToUpdate = currentPlan.steps.find(s => s.id === step.id);
+          if (stepToUpdate) {
+            stepToUpdate.status = 'needs_review';
+            stepToUpdate.metadata = {
+              ...stepToUpdate.metadata,
+              incompleteReason: 'Step did not complete and no blocker was identified',
+              lastOutput: result.output.slice(-500), // Last 500 chars for context
+            };
+            await storage.writeJson(planPath, currentPlan);
+          }
+        }
+      }
 
       // Broadcast step completed if applicable
       if (stepCompleted && eventBroadcaster) {
@@ -802,9 +876,38 @@ async function executeStage3Steps(
     }
 
     if (!result.stepCompleted) {
-      // Step didn't complete (unexpected) - log and stop
-      console.warn(`Step [${nextStep.id}] did not complete, stopping execution`);
-      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_waiting');
+      // Step didn't complete - check if it needs review (return to Stage 2)
+      const updatedPlan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+      const stepStatus = updatedPlan?.steps.find(s => s.id === nextStep.id)?.status;
+
+      if (stepStatus === 'needs_review') {
+        console.log(`Step [${nextStep.id}] needs review, returning to Stage 2 for replanning`);
+
+        // Transition back to Stage 2 for replanning
+        const previousStage = session.currentStage;
+        const updatedSession = await sessionManager.transitionStage(
+          session.projectId, session.featureId, 2
+        );
+        eventBroadcaster?.stageChanged(updatedSession, previousStage);
+        eventBroadcaster?.executionStatus(
+          session.projectId, session.featureId, 'idle', 'stage2_replanning_needed'
+        );
+
+        // Spawn Stage 2 review with context about the failed step
+        const failedStepContext = `The following step could not be completed and needs review:\n\nStep ${nextStep.id}: ${nextStep.title}\n\nReason: The step did not complete successfully and no specific blocker was identified. Please review the plan and either:\n1. Provide more detailed instructions for this step\n2. Break it into smaller steps\n3. Identify any missing prerequisites`;
+
+        spawnStage2Review(
+          updatedSession,
+          storage,
+          sessionManager,
+          resultHandler,
+          eventBroadcaster,
+          failedStepContext
+        );
+      } else {
+        console.warn(`Step [${nextStep.id}] did not complete, stopping execution`);
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_waiting');
+      }
       hasMoreSteps = false;
       continue;
     }
