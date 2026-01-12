@@ -1,4 +1,27 @@
 import { Session, Plan, Question } from '@claude-code-web/shared';
+import { escapeMarkers } from '../utils/sanitizeInput';
+
+/**
+ * Sanitize user-provided session fields to prevent prompt injection.
+ * Returns a copy of the session with escaped markers in user input fields.
+ */
+function sanitizeSessionFields(session: Session): {
+  title: string;
+  featureDescription: string;
+  technicalNotes: string;
+  acceptanceCriteria: Array<{ text: string }>;
+  affectedFiles: string[];
+} {
+  return {
+    title: escapeMarkers(session.title),
+    featureDescription: escapeMarkers(session.featureDescription),
+    technicalNotes: escapeMarkers(session.technicalNotes || ''),
+    acceptanceCriteria: session.acceptanceCriteria.map(c => ({
+      text: escapeMarkers(c.text),
+    })),
+    affectedFiles: session.affectedFiles.map(f => escapeMarkers(f)),
+  };
+}
 
 /**
  * Build Stage 1: Feature Discovery prompt
@@ -6,28 +29,31 @@ import { Session, Plan, Question } from '@claude-code-web/shared';
  * Per README lines 1546-1611
  */
 export function buildStage1Prompt(session: Session): string {
-  const acceptanceCriteriaText = session.acceptanceCriteria.length > 0
-    ? session.acceptanceCriteria.map((c, i) => `${i + 1}. ${c.text}`).join('\n')
+  // Sanitize user-provided fields to prevent marker injection
+  const sanitized = sanitizeSessionFields(session);
+
+  const acceptanceCriteriaText = sanitized.acceptanceCriteria.length > 0
+    ? sanitized.acceptanceCriteria.map((c, i) => `${i + 1}. ${c.text}`).join('\n')
     : 'No specific criteria provided.';
 
-  const affectedFilesSection = session.affectedFiles.length > 0
+  const affectedFilesSection = sanitized.affectedFiles.length > 0
     ? `
 ## Affected Files (User Hints)
 These files are likely to need changes:
-${session.affectedFiles.join('\n')}`
+${sanitized.affectedFiles.join('\n')}`
     : '';
 
-  const technicalNotesSection = session.technicalNotes
+  const technicalNotesSection = sanitized.technicalNotes
     ? `
 ## Technical Notes
-${session.technicalNotes}`
+${sanitized.technicalNotes}`
     : '';
 
   return `You are helping implement a new feature. You MUST thoroughly explore the codebase BEFORE asking any questions.
 
 ## Feature
-Title: ${session.title}
-Description: ${session.featureDescription}
+Title: ${sanitized.title}
+Description: ${sanitized.featureDescription}
 Project Path: ${session.projectPath}
 
 ## Acceptance Criteria
@@ -160,6 +186,10 @@ How should we address this?
  * Revises plan based on user feedback.
  */
 export function buildPlanRevisionPrompt(session: Session, plan: Plan, feedback: string): string {
+  // Sanitize user-provided fields to prevent marker injection
+  const sanitized = sanitizeSessionFields(session);
+  const sanitizedFeedback = escapeMarkers(feedback);
+
   const planStepsText = plan.steps.length > 0
     ? plan.steps.map((step, i) => {
         const parentInfo = step.parentId ? ` (depends on: ${step.parentId})` : '';
@@ -175,14 +205,14 @@ export function buildPlanRevisionPrompt(session: Session, plan: Plan, feedback: 
   return `You are revising an implementation plan based on user feedback.
 
 ## Feature
-Title: ${session.title}
-Description: ${session.featureDescription}
+Title: ${sanitized.title}
+Description: ${sanitized.featureDescription}
 
 ## Current Plan (v${plan.planVersion})
 ${planStepsText}${planFileReference}
 
 ## User Feedback
-${feedback}
+${sanitizedFeedback}
 
 ## Instructions
 1. Carefully consider the user's feedback
@@ -214,10 +244,11 @@ export function buildBatchAnswersContinuationPrompt(
   answeredQuestions: Question[],
   currentStage: number
 ): string {
+  // Sanitize user answers to prevent marker injection
   const answers = answeredQuestions.map(q => {
     const answerText = typeof q.answer?.value === 'string'
-      ? q.answer.value
-      : JSON.stringify(q.answer?.value);
+      ? escapeMarkers(q.answer.value)
+      : escapeMarkers(JSON.stringify(q.answer?.value));
     return `**Q:** ${q.questionText}\n**A:** ${answerText}`;
   }).join('\n\n');
 
@@ -318,11 +349,14 @@ ${step.description || 'No description provided.'}`;
 4. **Commit changes** - Create a git commit for the step
 5. **Report completion** - Use the markers below`;
 
+  // Sanitize user-provided fields to prevent marker injection
+  const sanitized = sanitizeSessionFields(session);
+
   return `You are implementing an approved feature plan. Execute each step sequentially, commit changes, and track progress.
 
 ## Feature
-Title: ${session.title}
-Description: ${session.featureDescription}
+Title: ${sanitized.title}
+Description: ${sanitized.featureDescription}
 Project Path: ${session.projectPath}
 
 ## Approved Plan (${plan.steps.length} steps)
@@ -405,6 +439,9 @@ ${testsRequired ? '5. Always run tests before marking a step complete' : '5. Run
  * Per README lines 1757-1795
  */
 export function buildStage4Prompt(session: Session, plan: Plan): string {
+  // Sanitize user-provided fields to prevent marker injection
+  const sanitized = sanitizeSessionFields(session);
+
   const completedSteps = plan.steps.filter(s => s.status === 'completed');
   const planStepsText = completedSteps.map((step, i) => {
     return `${i + 1}. [${step.id}] ${step.title}\n   ${step.description || 'No description'}`;
@@ -425,8 +462,8 @@ export function buildStage4Prompt(session: Session, plan: Plan): string {
   return `You are creating a pull request for a completed implementation.
 
 ## Feature
-Title: ${session.title}
-Description: ${session.featureDescription}
+Title: ${sanitized.title}
+Description: ${sanitized.featureDescription}
 Project Path: ${session.projectPath}
 
 ## Completed Implementation (${completedSteps.length} steps)
@@ -516,6 +553,9 @@ URL: {{prUrl}}
  * Per README lines 1797-1907
  */
 export function buildStage5Prompt(session: Session, plan: Plan, prInfo: { title: string; branch: string; url: string }): string {
+  // Sanitize user-provided fields to prevent marker injection
+  const sanitized = sanitizeSessionFields(session);
+
   const planStepsText = plan.steps.map((step, i) => {
     return `${i + 1}. [${step.id}] ${step.title}\n   ${step.description || 'No description'}`;
   }).join('\n\n');
@@ -530,8 +570,8 @@ export function buildStage5Prompt(session: Session, plan: Plan, prInfo: { title:
 IMPORTANT: You are reviewing this code with fresh eyes. Evaluate it as if you did not write it.
 
 ## Feature
-Title: ${session.title}
-Description: ${session.featureDescription}
+Title: ${sanitized.title}
+Description: ${sanitized.featureDescription}
 Project Path: ${session.projectPath}
 
 ## Implementation Plan
