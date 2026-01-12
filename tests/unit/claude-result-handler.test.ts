@@ -994,14 +994,17 @@ describe('ClaudeResultHandler', () => {
     });
 
     describe('implementation completion detection', () => {
-      it('should detect completion via implementationComplete marker', async () => {
+      it('should ignore implementationComplete marker and use state-only verification', async () => {
+        // The implementation now uses state-only verification
+        // The marker is logged but ignored for reliability
         const result = baseResult();
         result.parsed.implementationComplete = true;
         result.parsed.implementationSummary = 'All features implemented';
 
+        // Even with marker set, completion should be false because state shows pending steps
         const { implementationComplete } = await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
 
-        expect(implementationComplete).toBe(true);
+        expect(implementationComplete).toBe(false); // State-only verification: steps are still pending
       });
 
       it('should detect completion via state (all steps completed)', async () => {
@@ -1094,7 +1097,9 @@ describe('ClaudeResultHandler', () => {
         expect(status!.status).toBe('running');
       });
 
-      it('should set status to completed when implementation is done', async () => {
+      it('should keep status as running (completion handled by app.ts)', async () => {
+        // The ClaudeResultHandler no longer sets status to 'completed' directly
+        // That's handled by app.ts after state verification
         const sessionDir = `${stage3Session.projectId}/${stage3Session.featureId}`;
         // Mark all steps as completed
         const plan = await storage.readJson(`${sessionDir}/plan.json`) as Record<string, unknown>;
@@ -1110,14 +1115,19 @@ describe('ClaudeResultHandler', () => {
         const result = baseResult();
         result.parsed.implementationComplete = true;
 
-        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+        // The handler returns implementationComplete: true, but status remains 'running'
+        // app.ts is responsible for setting 'completed' status after state verification
+        const { implementationComplete } = await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        expect(implementationComplete).toBe(true); // State shows all steps completed
 
         const status = await storage.readJson<{ status: string; lastAction: string }>(
           `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
         );
 
-        expect(status!.status).toBe('completed');
-        expect(status!.lastAction).toBe('stage3_complete');
+        // Handler keeps status as 'running', completion status set by app.ts
+        expect(status!.status).toBe('running');
+        expect(status!.lastAction).toBe('stage3_progress');
       });
 
       it('should set lastAction to stage3_blocked when blocker detected', async () => {

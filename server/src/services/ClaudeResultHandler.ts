@@ -242,24 +242,24 @@ export class ClaudeResultHandler {
     const hasBlocker = blockerDecisions.length > 0;
     await this.updateStage3Status(sessionDir, result, hasBlocker ? stepId : undefined);
 
-    // Check implementation completion via state (primary) or marker (secondary)
+    // Check implementation completion via state ONLY (ignore unreliable marker)
     // State check: all plan steps have status 'completed' or 'skipped'
     const planPath = `${sessionDir}/plan.json`;
     const plan = await this.storage.readJson<Plan>(planPath);
     const stateComplete = isImplementationComplete(plan);
     const markerComplete = result.parsed.implementationComplete;
 
-    // Log which method detected completion
-    if (stateComplete || markerComplete) {
-      const method = stateComplete
-        ? (markerComplete ? 'state+marker' : 'state (all steps completed)')
-        : 'marker only';
-      console.log(`Implementation complete via ${method} for ${session.featureId}`);
+    // Log completion detection - state is authoritative, marker is for logging only
+    if (stateComplete) {
+      console.log(`Implementation complete via state (all steps completed) for ${session.featureId}`);
+    } else if (markerComplete) {
+      // Claude claimed completion but state disagrees - ignore the marker
+      console.log(`[WARN] Claude output [IMPLEMENTATION_COMPLETE] but state shows incomplete for ${session.featureId} - ignoring marker`);
     }
 
     return {
       hasBlocker,
-      implementationComplete: stateComplete || markerComplete,
+      implementationComplete: stateComplete,  // State-only verification (marker ignored)
     };
   }
 
@@ -336,11 +336,12 @@ export class ClaudeResultHandler {
       delete status.stepRetries[completed.id];
     }
 
-    status.status = result.isError ? 'error' : (result.parsed.implementationComplete ? 'completed' : 'running');
+    // Don't set status to 'completed' here based on marker - let state verification handle it
+    // Status will be set to 'idle' in app.ts after all steps are verified complete
+    const hasBlocker = result.parsed.decisions.some(d => d.category === 'blocker');
+    status.status = result.isError ? 'error' : (hasBlocker ? 'blocked' : 'running');
     status.claudeSpawnCount = (status.claudeSpawnCount || 0) + 1;
-    status.lastAction = result.parsed.implementationComplete
-      ? 'stage3_complete'
-      : (result.parsed.decisions.some(d => d.category === 'blocker') ? 'stage3_blocked' : 'stage3_progress');
+    status.lastAction = hasBlocker ? 'stage3_blocked' : 'stage3_progress';
     status.lastActionAt = now;
     status.lastOutputLength = result.output.length;
 
