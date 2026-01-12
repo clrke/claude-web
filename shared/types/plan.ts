@@ -10,6 +10,15 @@ export interface PlanStep {
   metadata: Record<string, unknown>;
 }
 
+export interface TestRequirement {
+  required: boolean;
+  reason: string;
+  testTypes: string[];
+  existingFramework: string | null;
+  suggestedCoverage: string;
+  assessedAt: string;
+}
+
 export interface Plan {
   version: string;
   planVersion: number;
@@ -18,6 +27,8 @@ export interface Plan {
   reviewCount: number;
   createdAt: string;
   steps: PlanStep[];
+  /** Test requirement assessment result - set after plan approval */
+  testRequirement?: TestRequirement;
 }
 
 export interface PlanHistoryEntry {

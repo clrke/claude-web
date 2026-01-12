@@ -1,4 +1,4 @@
-import type { Plan } from '@claude-code-web/shared';
+import type { Plan, Session } from '@claude-code-web/shared';
 import type { ParsedDecision } from '../services/OutputParser';
 
 /**
@@ -90,4 +90,73 @@ ${decision.options.map(o => `- ${o.label}${o.recommended ? ' (recommended)' : ''
 - When in doubt, use "pass" - it's better to ask than to miss an issue
 - Keep repurposed questions focused and actionable
 - Preserve the original priority unless you have reason to change it`;
+}
+
+/**
+ * Build prompt for Haiku to assess whether a plan requires tests.
+ * Called after plan approval, before Stage 3 execution.
+ */
+export function buildTestRequirementPrompt(session: Session, plan: Plan): string {
+  const planStepsText = plan.steps.map((step, i) =>
+    `${i + 1}. ${step.title}\n   ${step.description || 'No description'}`
+  ).join('\n\n');
+
+  return `Assess whether this implementation plan requires automated tests.
+
+## Feature
+Title: ${session.title}
+Description: ${session.featureDescription}
+
+## Implementation Plan
+${planStepsText}
+
+## Instructions
+
+1. **Analyze the plan**: What type of changes are being made?
+2. **Check the codebase**: Is there existing test infrastructure? (look for test files, jest.config, etc.)
+3. **Determine if tests are needed** based on the criteria below
+
+## Test Requirement Criteria
+
+**Tests ARE required for:**
+- New API endpoints or backend logic
+- Database operations or migrations
+- Business logic or calculations
+- Authentication/authorization changes
+- Data transformations or validations
+- Any code that could have bugs with real consequences
+
+**Tests are NOT required for:**
+- Documentation updates (README, comments, docs)
+- Configuration file changes
+- Pure styling/CSS changes
+- Simple text or copy changes
+- Prototype/exploratory code explicitly marked as such
+- Build/tooling configuration
+
+## Response Format (JSON only)
+
+{
+  "required": true | false,
+  "reason": "Brief explanation of why tests are/aren't needed",
+  "testTypes": ["unit", "integration", "e2e"],  // empty array if not required
+  "existingFramework": "jest" | "vitest" | "mocha" | null,
+  "suggestedCoverage": "Brief description of what should be tested"
+}
+
+## Examples
+
+**API endpoint addition:**
+{"required": true, "reason": "New API endpoints need integration tests", "testTypes": ["unit", "integration"], "existingFramework": "jest", "suggestedCoverage": "Test request/response handling, error cases, auth"}
+
+**README update:**
+{"required": false, "reason": "Documentation changes don't require tests", "testTypes": [], "existingFramework": null, "suggestedCoverage": ""}
+
+**CSS refactor:**
+{"required": false, "reason": "Pure styling changes don't require automated tests", "testTypes": [], "existingFramework": null, "suggestedCoverage": ""}
+
+## Rules
+- Err on the side of requiring tests for anything involving logic
+- Check for existing test patterns in the codebase
+- Consider the complexity and risk of the changes`;
 }

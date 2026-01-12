@@ -6,6 +6,7 @@ import { ClaudeOrchestrator } from './services/ClaudeOrchestrator';
 import { OutputParser } from './services/OutputParser';
 import { ClaudeResultHandler } from './services/ClaudeResultHandler';
 import { DecisionValidator } from './services/DecisionValidator';
+import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
 import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt } from './prompts/stagePrompts';
 import { Session } from '@claude-code-web/shared';
@@ -322,7 +323,7 @@ async function spawnStage3Implementation(
 
 /**
  * Handle Stage 3 completion - transition to Stage 4 when implementation complete
- * Requires all tests to be passing before allowing transition.
+ * Requires all tests to be passing before allowing transition (if tests were required).
  */
 async function handleStage3Completion(
   session: Session,
@@ -342,15 +343,20 @@ async function handleStage3Completion(
     return;
   }
 
-  // Verify all tests are passing (REQUIRED for Stage 3→4 transition)
-  if (!result.parsed.allTestsPassing) {
-    console.log(`Stage 3 cannot transition: tests not passing for ${session.featureId}`);
-    // TODO: Could raise a blocker question here asking user to confirm proceeding without tests
-    return;
-  }
+  // Check test requirements based on assessment
+  const testsRequired = plan.testRequirement?.required ?? true; // Default to required if not assessed
 
-  const testsCount = result.parsed.testsAdded.length;
-  console.log(`All ${plan.steps.length} steps completed with ${testsCount} tests passing, transitioning to Stage 4 for ${session.featureId}`);
+  if (testsRequired) {
+    // Verify all tests are passing (REQUIRED for Stage 3→4 transition)
+    if (!result.parsed.allTestsPassing) {
+      console.log(`Stage 3 cannot transition: tests required but not passing for ${session.featureId}`);
+      return;
+    }
+    const testsCount = result.parsed.testsAdded.length;
+    console.log(`All ${plan.steps.length} steps completed with ${testsCount} tests passing, transitioning to Stage 4 for ${session.featureId}`);
+  } else {
+    console.log(`All ${plan.steps.length} steps completed (tests not required: ${plan.testRequirement?.reason}), transitioning to Stage 4 for ${session.featureId}`);
+  }
 
   // Transition to Stage 4
   const previousStage = session.currentStage;
@@ -418,6 +424,8 @@ export function createApp(
 
   // Create decision validator for filtering false positives (README line 1461)
   const decisionValidator = new DecisionValidator();
+  // Create test requirement assessor to determine if tests are needed
+  const testAssessor = new TestRequirementAssessor();
   const resultHandler = new ClaudeResultHandler(storage, sessionManager, decisionValidator);
 
   // Middleware
@@ -1116,6 +1124,19 @@ After creating all steps, write the plan to a file and output:
       }
 
       plan.isApproved = true;
+
+      // Assess test requirements using Haiku (fire-and-forget, but save result)
+      console.log(`Assessing test requirements for ${featureId}...`);
+      const testRequirement = await testAssessor.assess(session, plan, session.projectPath);
+      plan.testRequirement = {
+        required: testRequirement.required,
+        reason: testRequirement.reason,
+        testTypes: testRequirement.testTypes,
+        existingFramework: testRequirement.existingFramework,
+        suggestedCoverage: testRequirement.suggestedCoverage,
+        assessedAt: testRequirement.assessedAt,
+      };
+
       await storage.writeJson(planPath, plan);
 
       // Transition to Stage 3 (Implementation)

@@ -273,6 +273,44 @@ ${step.description || 'No description provided.'}`;
     ? `\n\n## Full Plan Reference\nIMPORTANT: Read ${session.claudePlanFilePath} for complete plan details and context.`
     : '';
 
+  // Determine test requirements based on assessment
+  const testsRequired = plan.testRequirement?.required ?? true; // Default to required if not assessed
+  const testTypesText = plan.testRequirement?.testTypes?.join(', ') || 'unit';
+  const frameworkText = plan.testRequirement?.existingFramework
+    ? `Use the existing ${plan.testRequirement.existingFramework} test framework.`
+    : 'Set up a test framework if needed.';
+  const coverageText = plan.testRequirement?.suggestedCoverage || '';
+
+  // Build test section based on requirement
+  const testSection = testsRequired
+    ? `
+### Test Requirements (MANDATORY)
+- **Tests ARE required for this implementation**
+- Test types needed: ${testTypesText}
+- ${frameworkText}${coverageText ? `\n- Coverage focus: ${coverageText}` : ''}
+- Write tests BEFORE marking a step complete
+- Tests should cover: happy path, edge cases, error handling
+- Match existing test patterns in the codebase`
+    : `
+### Test Requirements
+- **Tests are NOT required for this implementation**
+- Reason: ${plan.testRequirement?.reason || 'Documentation/configuration changes only'}
+- You may skip writing tests for these changes
+- Still run existing tests to ensure no regressions`;
+
+  const executionSteps = testsRequired
+    ? `1. **Start the step** - Announce which step you're working on
+2. **Implement the changes** - Write/modify the necessary code
+3. **Write tests** - Add ${testTypesText} tests for new functionality
+4. **Run tests** - Verify all tests pass (max 3 fix attempts if tests fail)
+5. **Commit changes** - Create a git commit for the step
+6. **Report completion** - Use the markers below`
+    : `1. **Start the step** - Announce which step you're working on
+2. **Implement the changes** - Write/modify the necessary code
+3. **Run existing tests** - Ensure no regressions
+4. **Commit changes** - Create a git commit for the step
+5. **Report completion** - Use the markers below`;
+
   return `You are implementing an approved feature plan. Execute each step sequentially, commit changes, and track progress.
 
 ## Feature
@@ -287,19 +325,8 @@ ${planStepsText}${planFileReference}
 
 ### Execution Process
 For each step:
-1. **Start the step** - Announce which step you're working on
-2. **Implement the changes** - Write/modify the necessary code
-3. **Write tests** - Add unit/integration tests for new functionality
-4. **Run tests** - Verify all tests pass (max 3 fix attempts if tests fail)
-5. **Commit changes** - Create a git commit for the step
-6. **Report completion** - Use the markers below
-
-### Test Requirements (MANDATORY)
-- **Every new feature/function MUST have tests**
-- Write tests BEFORE marking a step complete
-- Tests should cover: happy path, edge cases, error handling
-- Match existing test patterns in the codebase
-- If no test framework exists, set one up as the first step
+${executionSteps}
+${testSection}
 
 ### Progress Markers (Required)
 
@@ -309,8 +336,8 @@ For each step:
 step_id: step-X
 status: in_progress|testing|fixing|committing
 files_modified: 3
-tests_status: pending|passing|failing
-work_type: implementing|testing|fixing
+tests_status: ${testsRequired ? 'pending|passing|failing' : 'skipped|passing'}
+work_type: implementing${testsRequired ? '|testing|fixing' : ''}
 progress: 50
 message: Brief status message
 [/IMPLEMENTATION_STATUS]
@@ -321,8 +348,7 @@ message: Brief status message
 [STEP_COMPLETE id="step-X"]
 Summary: Brief summary of what was implemented.
 Files modified: file1.ts, file2.ts
-Tests added: test1.spec.ts, test2.spec.ts
-Tests passing: Yes
+${testsRequired ? 'Tests added: test1.spec.ts, test2.spec.ts\nTests passing: Yes' : 'Tests added: none (not required)\nTests passing: N/A'}
 [/STEP_COMPLETE]
 \`\`\`
 
@@ -343,16 +369,15 @@ Note: When a blocker is raised, execution pauses. The user will answer and you'l
 Summary: What was implemented
 Steps completed: X of Y
 Files modified: list of key files
-Tests added: list of test files
-All tests passing: Yes/No
+${testsRequired ? 'Tests added: list of test files\nAll tests passing: Yes/No' : 'Tests added: none (not required for this change)\nAll tests passing: N/A'}
 [/IMPLEMENTATION_COMPLETE]
 \`\`\`
-Note: Do NOT output IMPLEMENTATION_COMPLETE unless all tests are passing.
-
+${testsRequired ? 'Note: Do NOT output IMPLEMENTATION_COMPLETE unless all tests are passing.' : 'Note: Tests were not required for this implementation. Proceed when all steps are complete.'}
+${testsRequired ? `
 ### Test Failure Handling
 - If tests fail, attempt to fix the issue (up to 3 attempts per step)
 - After 3 failed attempts, raise a blocker decision for user guidance
-- Track retry count in your IMPLEMENTATION_STATUS updates
+- Track retry count in your IMPLEMENTATION_STATUS updates` : ''}
 
 ### Git Commits
 - Create a commit after each step completion
@@ -364,5 +389,5 @@ Note: Do NOT output IMPLEMENTATION_COMPLETE unless all tests are passing.
 2. Do NOT skip steps or change the plan
 3. If a step cannot be completed, raise a blocker
 4. Output IMPLEMENTATION_STATUS regularly for real-time progress
-5. Always run tests before marking a step complete`;
+${testsRequired ? '5. Always run tests before marking a step complete' : '5. Run existing tests to ensure no regressions'}`;
 }
