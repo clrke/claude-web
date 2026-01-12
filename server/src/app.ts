@@ -428,6 +428,21 @@ async function spawnStage4PRCreation(
       // Save PR info
       await storage.writeJson(`${sessionDir}/pr.json`, prInfo);
 
+      // Save Stage 4 conversation
+      const conversationsPath = `${sessionDir}/conversations.json`;
+      const conversations = await storage.readJson<{ entries: unknown[] }>(conversationsPath) || { entries: [] };
+      conversations.entries.push({
+        stage: 4,
+        timestamp: new Date().toISOString(),
+        prompt: prompt,
+        output: result.output,
+        sessionId: result.sessionId,
+        costUsd: result.costUsd,
+        isError: result.isError,
+        parsed: result.parsed,
+      });
+      await storage.writeJson(conversationsPath, conversations);
+
       console.log(`PR created: ${prInfo.url || prInfo.title}`);
 
       // Broadcast PR created event
@@ -509,7 +524,7 @@ async function spawnStage5PRReview(
     },
   }).then(async (result) => {
     // Handle Stage 5 result
-    await handleStage5Result(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
+    await handleStage5Result(session, result, sessionDir, prompt, storage, sessionManager, resultHandler, eventBroadcaster);
   }).catch((error) => {
     console.error(`Stage 5 spawn error for ${session.featureId}:`, error);
     eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage5_spawn_error');
@@ -523,12 +538,28 @@ async function handleStage5Result(
   session: Session,
   result: ClaudeResult,
   sessionDir: string,
+  prompt: string,
   storage: FileStorageService,
   sessionManager: SessionManager,
   resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined
 ): Promise<void> {
   const statusPath = `${sessionDir}/status.json`;
+
+  // Save Stage 5 conversation
+  const conversationsPath = `${sessionDir}/conversations.json`;
+  const conversations = await storage.readJson<{ entries: unknown[] }>(conversationsPath) || { entries: [] };
+  conversations.entries.push({
+    stage: 5,
+    timestamp: new Date().toISOString(),
+    prompt: prompt,
+    output: result.output,
+    sessionId: result.sessionId,
+    costUsd: result.costUsd,
+    isError: result.isError,
+    parsed: result.parsed,
+  });
+  await storage.writeJson(conversationsPath, conversations);
 
   // Check for CI failure - requires return to Stage 2
   if (result.parsed.ciFailed || result.parsed.returnToStage2) {
