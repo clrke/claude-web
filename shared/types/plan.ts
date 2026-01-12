@@ -8,6 +8,8 @@ export interface PlanStep {
   description: string;
   status: PlanStepStatus;
   metadata: Record<string, unknown>;
+  /** Hash of step content (title + description) when completed. Used to skip re-implementation of unchanged steps. */
+  contentHash?: string | null;
 }
 
 export interface TestRequirement {

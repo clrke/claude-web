@@ -554,6 +554,26 @@ async function spawnStage3Implementation(
 }
 
 /**
+ * Compute a hash of step content (title + description) for change detection.
+ * Used to skip re-implementation of steps that haven't changed.
+ */
+function computeStepContentHash(step: PlanStep): string {
+  const crypto = require('crypto');
+  const content = `${step.title}|${step.description || ''}`;
+  return crypto.createHash('md5').update(content).digest('hex').substring(0, 12);
+}
+
+/**
+ * Check if a step's content has changed since it was last completed.
+ * Returns true if the step should be skipped (content unchanged).
+ */
+function shouldSkipUnchangedStep(step: PlanStep): boolean {
+  if (!step.contentHash) return false;  // No hash = never completed, don't skip
+  const currentHash = computeStepContentHash(step);
+  return step.contentHash === currentHash;
+}
+
+/**
  * Get the next step ready for execution (respects dependencies).
  */
 function getNextReadyStep(plan: Plan): PlanStep | null {
@@ -593,6 +613,21 @@ async function executeSingleStep(
 ): Promise<{ stepCompleted: boolean; hasBlocker: boolean; sessionId: string | null }> {
   const sessionDir = `${session.projectId}/${session.featureId}`;
   const statusPath = `${sessionDir}/status.json`;
+
+  // Check if step content has changed since last completion
+  // If unchanged, skip re-implementation and mark as completed
+  if (shouldSkipUnchangedStep(step)) {
+    console.log(`Skipping step [${step.id}] - content unchanged (hash: ${step.contentHash})`);
+
+    // Mark step as completed (preserve existing completion data)
+    step.status = 'completed';
+    await storage.writeJson(`${sessionDir}/plan.json`, plan);
+
+    // Broadcast step skipped/completed
+    eventBroadcaster?.stepCompleted(session.projectId, session.featureId, step, 'Skipped - unchanged', []);
+
+    return { stepCompleted: true, hasBlocker: false, sessionId: session.claudeStage3SessionId || null };
+  }
 
   // Update currentStepId in status
   const status = await storage.readJson<Record<string, unknown>>(statusPath);

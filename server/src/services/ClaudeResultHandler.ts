@@ -279,6 +279,10 @@ export class ClaudeResultHandler {
       const step = plan.steps.find(s => s.id === completed.id);
       if (step) {
         step.status = 'completed';
+        // Compute and store content hash for change detection on re-runs
+        const crypto = require('crypto');
+        const content = `${step.title}|${step.description || ''}`;
+        step.contentHash = crypto.createHash('md5').update(content).digest('hex').substring(0, 12);
         // Store summary in metadata
         step.metadata = {
           ...step.metadata,
