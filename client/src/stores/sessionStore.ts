@@ -12,7 +12,18 @@ export interface ConversationEntry {
   error?: string;
   status?: 'started' | 'completed';
   /** Post-processing type (if this is a Haiku post-processing call) */
-  postProcessingType?: 'decision_validation' | 'test_assessment' | 'incomplete_steps' | 'question_extraction';
+  postProcessingType?:
+    | 'decision_validation'
+    | 'test_assessment'
+    | 'incomplete_steps'
+    | 'question_extraction'
+    | 'plan_step_extraction'
+    | 'pr_info_extraction'
+    | 'implementation_status_extraction'
+    | 'test_results_extraction'
+    | 'review_findings_extraction'
+    | 'commit_message_generation'
+    | 'summary_generation';
 }
 
 export interface ExecutionStatus {

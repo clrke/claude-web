@@ -170,6 +170,13 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
     test_assessment: 'Test Assessment',
     incomplete_steps: 'Step Assessment',
     question_extraction: 'Question Extraction',
+    plan_step_extraction: 'Plan Extraction',
+    pr_info_extraction: 'PR Extraction',
+    implementation_status_extraction: 'Status Extraction',
+    test_results_extraction: 'Test Extraction',
+    review_findings_extraction: 'Review Extraction',
+    commit_message_generation: 'Commit Message',
+    summary_generation: 'Summary',
   };
 
   const stageLabel = entry.postProcessingType
