@@ -212,4 +212,381 @@ describe('sessionStore', () => {
       expect(state.error).toBeNull();
     });
   });
+
+  describe('updateStepStatus', () => {
+    it('should update step status in plan', () => {
+      useSessionStore.setState({
+        plan: {
+          id: 'plan-1',
+          sessionId: 'session-1',
+          steps: [
+            { id: 'step-1', title: 'Step 1', status: 'pending', order: 0 },
+            { id: 'step-2', title: 'Step 2', status: 'pending', order: 1 },
+          ],
+          isApproved: true,
+        } as any,
+      });
+
+      useSessionStore.getState().updateStepStatus('step-1', 'in_progress');
+
+      const plan = useSessionStore.getState().plan;
+      expect(plan?.steps[0].status).toBe('in_progress');
+      expect(plan?.steps[1].status).toBe('pending');
+    });
+
+    it('should update step status to completed', () => {
+      useSessionStore.setState({
+        plan: {
+          id: 'plan-1',
+          sessionId: 'session-1',
+          steps: [
+            { id: 'step-1', title: 'Step 1', status: 'in_progress', order: 0 },
+          ],
+          isApproved: true,
+        } as any,
+      });
+
+      useSessionStore.getState().updateStepStatus('step-1', 'completed');
+
+      const plan = useSessionStore.getState().plan;
+      expect(plan?.steps[0].status).toBe('completed');
+    });
+
+    it('should update step status to blocked', () => {
+      useSessionStore.setState({
+        plan: {
+          id: 'plan-1',
+          sessionId: 'session-1',
+          steps: [
+            { id: 'step-1', title: 'Step 1', status: 'in_progress', order: 0 },
+          ],
+          isApproved: true,
+        } as any,
+      });
+
+      useSessionStore.getState().updateStepStatus('step-1', 'blocked');
+
+      const plan = useSessionStore.getState().plan;
+      expect(plan?.steps[0].status).toBe('blocked');
+    });
+
+    it('should not affect other steps when updating one', () => {
+      useSessionStore.setState({
+        plan: {
+          id: 'plan-1',
+          sessionId: 'session-1',
+          steps: [
+            { id: 'step-1', title: 'Step 1', status: 'completed', order: 0 },
+            { id: 'step-2', title: 'Step 2', status: 'pending', order: 1 },
+            { id: 'step-3', title: 'Step 3', status: 'pending', order: 2 },
+          ],
+          isApproved: true,
+        } as any,
+      });
+
+      useSessionStore.getState().updateStepStatus('step-2', 'in_progress');
+
+      const plan = useSessionStore.getState().plan;
+      expect(plan?.steps[0].status).toBe('completed');
+      expect(plan?.steps[1].status).toBe('in_progress');
+      expect(plan?.steps[2].status).toBe('pending');
+    });
+
+    it('should do nothing if plan is null', () => {
+      useSessionStore.setState({ plan: null });
+
+      // Should not throw
+      useSessionStore.getState().updateStepStatus('step-1', 'in_progress');
+
+      expect(useSessionStore.getState().plan).toBeNull();
+    });
+
+    it('should do nothing if stepId does not exist', () => {
+      useSessionStore.setState({
+        plan: {
+          id: 'plan-1',
+          sessionId: 'session-1',
+          steps: [
+            { id: 'step-1', title: 'Step 1', status: 'pending', order: 0 },
+          ],
+          isApproved: true,
+        } as any,
+      });
+
+      useSessionStore.getState().updateStepStatus('non-existent-step', 'in_progress');
+
+      const plan = useSessionStore.getState().plan;
+      expect(plan?.steps[0].status).toBe('pending');
+    });
+
+    it('should preserve other plan properties when updating step', () => {
+      useSessionStore.setState({
+        plan: {
+          id: 'plan-1',
+          sessionId: 'session-1',
+          steps: [
+            { id: 'step-1', title: 'Step 1', status: 'pending', order: 0 },
+          ],
+          isApproved: true,
+          createdAt: '2026-01-13T00:00:00Z',
+          updatedAt: '2026-01-13T00:00:00Z',
+        } as any,
+      });
+
+      useSessionStore.getState().updateStepStatus('step-1', 'completed');
+
+      const plan = useSessionStore.getState().plan;
+      expect(plan?.id).toBe('plan-1');
+      expect(plan?.sessionId).toBe('session-1');
+      expect(plan?.isApproved).toBe(true);
+      expect(plan?.createdAt).toBe('2026-01-13T00:00:00Z');
+    });
+
+    it('should handle all valid step statuses', () => {
+      const statuses = ['pending', 'in_progress', 'completed', 'blocked', 'skipped', 'needs_review'] as const;
+
+      statuses.forEach((status) => {
+        useSessionStore.setState({
+          plan: {
+            id: 'plan-1',
+            sessionId: 'session-1',
+            steps: [
+              { id: 'step-1', title: 'Step 1', status: 'pending', order: 0 },
+            ],
+            isApproved: true,
+          } as any,
+        });
+
+        useSessionStore.getState().updateStepStatus('step-1', status);
+
+        const plan = useSessionStore.getState().plan;
+        expect(plan?.steps[0].status).toBe(status);
+      });
+    });
+  });
+
+  describe('setImplementationProgress', () => {
+    it('should set implementation progress', () => {
+      const progress = {
+        sessionId: 'session-1',
+        projectId: 'proj-1',
+        featureId: 'feat-1',
+        status: 'in_progress' as const,
+        currentStepId: 'step-1',
+        completedSteps: 2,
+        totalSteps: 5,
+        timestamp: '2026-01-13T00:00:00Z',
+      };
+
+      useSessionStore.getState().setImplementationProgress(progress);
+
+      expect(useSessionStore.getState().implementationProgress).toEqual(progress);
+    });
+
+    it('should update implementation progress with new values', () => {
+      const initialProgress = {
+        sessionId: 'session-1',
+        projectId: 'proj-1',
+        featureId: 'feat-1',
+        status: 'in_progress' as const,
+        currentStepId: 'step-1',
+        completedSteps: 1,
+        totalSteps: 5,
+        timestamp: '2026-01-13T00:00:00Z',
+      };
+
+      const updatedProgress = {
+        sessionId: 'session-1',
+        projectId: 'proj-1',
+        featureId: 'feat-1',
+        status: 'in_progress' as const,
+        currentStepId: 'step-2',
+        completedSteps: 2,
+        totalSteps: 5,
+        timestamp: '2026-01-13T00:01:00Z',
+      };
+
+      useSessionStore.getState().setImplementationProgress(initialProgress);
+      expect(useSessionStore.getState().implementationProgress?.currentStepId).toBe('step-1');
+
+      useSessionStore.getState().setImplementationProgress(updatedProgress);
+      expect(useSessionStore.getState().implementationProgress?.currentStepId).toBe('step-2');
+      expect(useSessionStore.getState().implementationProgress?.completedSteps).toBe(2);
+    });
+
+    it('should set implementation progress to null', () => {
+      useSessionStore.setState({
+        implementationProgress: {
+          sessionId: 'session-1',
+          projectId: 'proj-1',
+          featureId: 'feat-1',
+          status: 'in_progress' as const,
+          currentStepId: 'step-1',
+          completedSteps: 1,
+          totalSteps: 5,
+          timestamp: '2026-01-13T00:00:00Z',
+        },
+      });
+
+      useSessionStore.getState().setImplementationProgress(null);
+
+      expect(useSessionStore.getState().implementationProgress).toBeNull();
+    });
+
+    it('should handle testing status', () => {
+      const progress = {
+        sessionId: 'session-1',
+        projectId: 'proj-1',
+        featureId: 'feat-1',
+        status: 'testing' as const,
+        currentStepId: 'step-1',
+        completedSteps: 1,
+        totalSteps: 5,
+        testStatus: 'running' as const,
+        timestamp: '2026-01-13T00:00:00Z',
+      };
+
+      useSessionStore.getState().setImplementationProgress(progress);
+
+      expect(useSessionStore.getState().implementationProgress?.status).toBe('testing');
+      expect(useSessionStore.getState().implementationProgress?.testStatus).toBe('running');
+    });
+
+    it('should handle fixing status with retry count', () => {
+      const progress = {
+        sessionId: 'session-1',
+        projectId: 'proj-1',
+        featureId: 'feat-1',
+        status: 'fixing' as const,
+        currentStepId: 'step-1',
+        completedSteps: 1,
+        totalSteps: 5,
+        retryCount: 2,
+        timestamp: '2026-01-13T00:00:00Z',
+      };
+
+      useSessionStore.getState().setImplementationProgress(progress);
+
+      expect(useSessionStore.getState().implementationProgress?.status).toBe('fixing');
+      expect(useSessionStore.getState().implementationProgress?.retryCount).toBe(2);
+    });
+
+    it('should handle committing status', () => {
+      const progress = {
+        sessionId: 'session-1',
+        projectId: 'proj-1',
+        featureId: 'feat-1',
+        status: 'committing' as const,
+        currentStepId: 'step-1',
+        completedSteps: 1,
+        totalSteps: 5,
+        timestamp: '2026-01-13T00:00:00Z',
+      };
+
+      useSessionStore.getState().setImplementationProgress(progress);
+
+      expect(useSessionStore.getState().implementationProgress?.status).toBe('committing');
+    });
+
+    it('should handle blocked status', () => {
+      const progress = {
+        sessionId: 'session-1',
+        projectId: 'proj-1',
+        featureId: 'feat-1',
+        status: 'blocked' as const,
+        currentStepId: 'step-1',
+        completedSteps: 1,
+        totalSteps: 5,
+        timestamp: '2026-01-13T00:00:00Z',
+      };
+
+      useSessionStore.getState().setImplementationProgress(progress);
+
+      expect(useSessionStore.getState().implementationProgress?.status).toBe('blocked');
+    });
+  });
+
+  describe('implementation progress in reset', () => {
+    it('should reset implementation progress to null', () => {
+      useSessionStore.setState({
+        implementationProgress: {
+          sessionId: 'session-1',
+          projectId: 'proj-1',
+          featureId: 'feat-1',
+          status: 'in_progress' as const,
+          currentStepId: 'step-1',
+          completedSteps: 3,
+          totalSteps: 5,
+          timestamp: '2026-01-13T00:00:00Z',
+        },
+      });
+
+      useSessionStore.getState().reset();
+
+      expect(useSessionStore.getState().implementationProgress).toBeNull();
+    });
+  });
+
+  describe('socket event integration', () => {
+    it('should update step status correctly for step.started event', () => {
+      useSessionStore.setState({
+        plan: {
+          id: 'plan-1',
+          sessionId: 'session-1',
+          steps: [
+            { id: 'step-1', title: 'Step 1', status: 'pending', order: 0 },
+            { id: 'step-2', title: 'Step 2', status: 'pending', order: 1 },
+          ],
+          isApproved: true,
+        } as any,
+      });
+
+      // Simulate socket event handler calling updateStepStatus
+      const stepStartedData = { stepId: 'step-1', stepTitle: 'Step 1' };
+      useSessionStore.getState().updateStepStatus(stepStartedData.stepId, 'in_progress');
+
+      const plan = useSessionStore.getState().plan;
+      expect(plan?.steps[0].status).toBe('in_progress');
+    });
+
+    it('should update step status correctly for step.completed event', () => {
+      useSessionStore.setState({
+        plan: {
+          id: 'plan-1',
+          sessionId: 'session-1',
+          steps: [
+            { id: 'step-1', title: 'Step 1', status: 'in_progress', order: 0 },
+          ],
+          isApproved: true,
+        } as any,
+      });
+
+      // Simulate socket event handler calling updateStepStatus
+      const stepCompletedData = { stepId: 'step-1', status: 'completed' as const };
+      useSessionStore.getState().updateStepStatus(stepCompletedData.stepId, stepCompletedData.status);
+
+      const plan = useSessionStore.getState().plan;
+      expect(plan?.steps[0].status).toBe('completed');
+    });
+
+    it('should handle implementation.progress event', () => {
+      // Simulate socket event handler calling setImplementationProgress
+      const progressData = {
+        sessionId: 'session-1',
+        projectId: 'proj-1',
+        featureId: 'feat-1',
+        status: 'in_progress' as const,
+        currentStepId: 'step-2',
+        completedSteps: 1,
+        totalSteps: 3,
+        timestamp: '2026-01-13T00:00:00Z',
+      };
+
+      useSessionStore.getState().setImplementationProgress(progressData);
+
+      const progress = useSessionStore.getState().implementationProgress;
+      expect(progress?.currentStepId).toBe('step-2');
+      expect(progress?.completedSteps).toBe(1);
+    });
+  });
 });
