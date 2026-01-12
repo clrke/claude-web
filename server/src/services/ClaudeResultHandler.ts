@@ -29,7 +29,7 @@ interface ConversationEntry {
   isError: boolean;
   error?: string;
   parsed: ClaudeResult['parsed'];
-  status?: 'started' | 'completed';
+  status?: 'started' | 'completed' | 'interrupted';
   /** Post-processing type (if this is a Haiku post-processing call) */
   postProcessingType?: 'decision_validation' | 'test_assessment' | 'incomplete_steps' | 'question_extraction';
 }
@@ -380,6 +380,30 @@ export class ClaudeResultHandler {
    * Save a "started" conversation entry when spawning begins.
    * This allows the frontend to show progress before Claude responds.
    */
+  /**
+   * Mark any incomplete "started" conversation entries as "interrupted".
+   * Called before resuming a stuck session to clean up orphaned entries.
+   */
+  async markIncompleteConversationsAsInterrupted(sessionDir: string): Promise<number> {
+    const conversationPath = `${sessionDir}/conversations.json`;
+    const conversations = await this.storage.readJson<ConversationsFile>(conversationPath);
+    if (!conversations) return 0;
+
+    let count = 0;
+    for (const entry of conversations.entries) {
+      if (entry.status === 'started') {
+        entry.status = 'interrupted';
+        entry.error = 'Session interrupted by server restart';
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      await this.storage.writeJson(conversationPath, conversations);
+    }
+    return count;
+  }
+
   async saveConversationStart(sessionDir: string, stage: number, prompt: string): Promise<void> {
     const conversationPath = `${sessionDir}/conversations.json`;
     const conversations = await this.storage.readJson<ConversationsFile>(conversationPath) || { entries: [] };

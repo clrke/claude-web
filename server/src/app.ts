@@ -819,7 +819,7 @@ export function createApp(
   storage: FileStorageService,
   sessionManager: SessionManager,
   eventBroadcaster?: EventBroadcaster
-): Express {
+): { app: Express; resumeStuckSessions: () => Promise<void> } {
   const app = express();
 
   // Create decision validator for filtering false positives (README line 1461)
@@ -1851,5 +1851,102 @@ After creating all steps, write the plan to a file and output:
     }
   });
 
-  return app;
+  /**
+   * Resume sessions that were interrupted by server restart.
+   * Detects stuck sessions (status=running/implementing, stale lastActionAt)
+   * and re-spawns Claude with --resume to continue where it left off.
+   */
+  async function resumeStuckSessions(): Promise<void> {
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+    const now = Date.now();
+
+    try {
+      const allSessions = await sessionManager.listAllSessions();
+
+      for (const session of allSessions) {
+        // Only check running/implementing sessions
+        if (session.status !== 'implementing' && session.status !== 'discovery' && session.status !== 'planning' && session.status !== 'pr_creation' && session.status !== 'pr_review') {
+          continue;
+        }
+
+        // Check if session is stale (no activity for 5+ minutes)
+        const sessionDir = `${session.projectId}/${session.featureId}`;
+        const status = await storage.readJson<{ lastActionAt?: string; status?: string }>(`${sessionDir}/status.json`);
+
+        if (!status?.lastActionAt) continue;
+
+        const lastActionTime = new Date(status.lastActionAt).getTime();
+        const isStale = (now - lastActionTime) > STALE_THRESHOLD_MS;
+
+        if (!isStale) continue;
+
+        // Check if last conversation entry is incomplete (started but not completed)
+        const conversations = await storage.readJson<{ entries: Array<{ stage: number; status: string }> }>(`${sessionDir}/conversations.json`);
+        const lastEntry = conversations?.entries?.[conversations.entries.length - 1];
+
+        if (!lastEntry || lastEntry.status !== 'started') continue;
+
+        // This session is stuck - resume it
+        console.log(`Resuming stuck session: ${session.featureId} (Stage ${session.currentStage}, stale for ${Math.round((now - lastActionTime) / 1000 / 60)} minutes)`);
+
+        try {
+          // Mark incomplete conversation entries as interrupted before resuming
+          const interruptedCount = await resultHandler.markIncompleteConversationsAsInterrupted(sessionDir);
+          if (interruptedCount > 0) {
+            console.log(`Marked ${interruptedCount} incomplete conversation(s) as interrupted for ${session.featureId}`);
+          }
+
+          // Update session.updatedAt to reflect the resume
+          const updatedSession = await sessionManager.updateSession(session.projectId, session.featureId, {});
+
+          const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+
+          switch (session.currentStage) {
+            case 1: {
+              // Stage 1: Discovery - skip auto-resume (user can restart session)
+              console.log(`Skipping Stage 1 auto-resume for ${session.featureId} - user can restart session`);
+              break;
+            }
+            case 2: {
+              // Stage 2: Plan Review - resume with stage 2 prompt
+              if (!plan) break;
+              const currentIteration = (plan.reviewCount || 0) + 1;
+              const prompt = buildStage2Prompt(session, plan, currentIteration);
+              await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+              break;
+            }
+            case 3: {
+              // Stage 3: Implementation - resume with stage 3 prompt
+              if (!plan) break;
+              const prompt = buildStage3Prompt(session, plan);
+              await spawnStage3Implementation(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+              break;
+            }
+            case 4: {
+              // Stage 4: PR Creation - resume with stage 4 prompt
+              if (!plan) break;
+              const prompt = buildStage4Prompt(session, plan);
+              await spawnStage4PRCreation(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+              break;
+            }
+            case 5: {
+              // Stage 5: PR Review - resume with stage 5 prompt
+              if (!plan) break;
+              const prInfo = await storage.readJson<{ title: string; branch: string; url: string }>(`${sessionDir}/pr.json`);
+              if (!prInfo) break;
+              const prompt = buildStage5Prompt(session, plan, prInfo);
+              await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+              break;
+            }
+          }
+        } catch (error) {
+          console.error(`Failed to resume session ${session.featureId}:`, error);
+        }
+      }
+    } catch (error) {
+      console.error('Error scanning for stuck sessions:', error);
+    }
+  }
+
+  return { app, resumeStuckSessions };
 }

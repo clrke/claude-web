@@ -557,4 +557,87 @@ describe('ClaudeResultHandler', () => {
       expect(status!.lastAction).toBe('stage1_error');
     });
   });
+
+  describe('markIncompleteConversationsAsInterrupted', () => {
+    const sessionDir = 'test-project/add-auth';
+
+    it('should mark started conversations as interrupted', async () => {
+      // Set up conversations with a "started" entry
+      await storage.writeJson(`${sessionDir}/conversations.json`, {
+        entries: [
+          { stage: 1, status: 'completed', timestamp: '2026-01-01T00:00:00Z', prompt: 'p1', output: 'o1' },
+          { stage: 2, status: 'started', timestamp: '2026-01-01T01:00:00Z', prompt: 'p2', output: '' },
+        ],
+      });
+
+      const count = await handler.markIncompleteConversationsAsInterrupted(sessionDir);
+
+      expect(count).toBe(1);
+
+      const conversations = await storage.readJson<{ entries: Array<{ status: string; error?: string }> }>(`${sessionDir}/conversations.json`);
+      expect(conversations!.entries[0].status).toBe('completed');
+      expect(conversations!.entries[1].status).toBe('interrupted');
+      expect(conversations!.entries[1].error).toBe('Session interrupted by server restart');
+    });
+
+    it('should mark multiple started conversations as interrupted', async () => {
+      // Set up conversations with multiple "started" entries (edge case)
+      await storage.writeJson(`${sessionDir}/conversations.json`, {
+        entries: [
+          { stage: 1, status: 'started', timestamp: '2026-01-01T00:00:00Z', prompt: 'p1', output: '' },
+          { stage: 2, status: 'started', timestamp: '2026-01-01T01:00:00Z', prompt: 'p2', output: '' },
+          { stage: 3, status: 'started', timestamp: '2026-01-01T02:00:00Z', prompt: 'p3', output: '' },
+        ],
+      });
+
+      const count = await handler.markIncompleteConversationsAsInterrupted(sessionDir);
+
+      expect(count).toBe(3);
+
+      const conversations = await storage.readJson<{ entries: Array<{ status: string }> }>(`${sessionDir}/conversations.json`);
+      expect(conversations!.entries.every(e => e.status === 'interrupted')).toBe(true);
+    });
+
+    it('should return 0 if no started conversations exist', async () => {
+      // Set up conversations with only completed entries
+      await storage.writeJson(`${sessionDir}/conversations.json`, {
+        entries: [
+          { stage: 1, status: 'completed', timestamp: '2026-01-01T00:00:00Z', prompt: 'p1', output: 'o1' },
+          { stage: 2, status: 'completed', timestamp: '2026-01-01T01:00:00Z', prompt: 'p2', output: 'o2' },
+        ],
+      });
+
+      const count = await handler.markIncompleteConversationsAsInterrupted(sessionDir);
+
+      expect(count).toBe(0);
+    });
+
+    it('should return 0 if conversations file does not exist', async () => {
+      // Remove conversations file
+      const conversationsPath = path.join(testDir, sessionDir, 'conversations.json');
+      await fs.remove(conversationsPath);
+
+      const count = await handler.markIncompleteConversationsAsInterrupted(sessionDir);
+
+      expect(count).toBe(0);
+    });
+
+    it('should not modify already interrupted conversations', async () => {
+      // Set up conversations with an already interrupted entry
+      await storage.writeJson(`${sessionDir}/conversations.json`, {
+        entries: [
+          { stage: 1, status: 'interrupted', timestamp: '2026-01-01T00:00:00Z', prompt: 'p1', output: '', error: 'Previous error' },
+          { stage: 2, status: 'started', timestamp: '2026-01-01T01:00:00Z', prompt: 'p2', output: '' },
+        ],
+      });
+
+      const count = await handler.markIncompleteConversationsAsInterrupted(sessionDir);
+
+      expect(count).toBe(1); // Only the "started" one
+
+      const conversations = await storage.readJson<{ entries: Array<{ status: string; error?: string }> }>(`${sessionDir}/conversations.json`);
+      expect(conversations!.entries[0].error).toBe('Previous error'); // Original error preserved
+      expect(conversations!.entries[1].status).toBe('interrupted');
+    });
+  });
 });

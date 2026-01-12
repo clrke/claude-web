@@ -25,7 +25,7 @@ const io = new Server(httpServer, {
 const eventBroadcaster = new EventBroadcaster(io);
 
 // Create Express app with all dependencies
-const app = createApp(storage, sessionManager, eventBroadcaster);
+const { app, resumeStuckSessions } = createApp(storage, sessionManager, eventBroadcaster);
 
 // Attach Express app to HTTP server
 httpServer.on('request', app);
@@ -71,9 +71,12 @@ io.on('connection', (socket) => {
 
 // Start server
 const PORT = process.env.PORT || 3333;
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Data directory: ${dataDir}`);
+
+  // Resume any sessions that were interrupted by server restart
+  await resumeStuckSessions();
 });
 
 // Set up graceful shutdown (README lines 669-690)
