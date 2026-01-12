@@ -356,13 +356,24 @@ export class ClaudeResultHandler {
     isError: boolean = false,
     error?: string
   ): Promise<void> {
+    // Extract just the result field from Haiku JSON output
+    let cleanOutput = output;
+    try {
+      const parsed = JSON.parse(output);
+      if (parsed.result !== undefined) {
+        cleanOutput = parsed.result;
+      }
+    } catch {
+      // Not valid JSON, use as-is
+    }
+
     const conversationPath = `${sessionDir}/conversations.json`;
     const conversations = await this.storage.readJson<ConversationsFile>(conversationPath) || { entries: [] };
     conversations.entries.push({
       stage,
       timestamp: new Date().toISOString(),
       prompt,
-      output,
+      output: cleanOutput,
       sessionId: null,
       costUsd: 0, // Haiku costs are minimal, could calculate if needed
       isError,
