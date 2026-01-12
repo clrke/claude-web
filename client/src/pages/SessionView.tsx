@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useSessionStore } from '../stores/sessionStore';
 import { TimelineView } from '../components/PlanEditor';
@@ -475,6 +475,57 @@ function QuestionsSection({ questions, stage }: { questions: Question[]; stage: 
   );
 }
 
+/**
+ * Renders simple markdown: **bold**, `code`, and newlines
+ */
+function SimpleMarkdown({ text, className = '' }: { text: string; className?: string }) {
+  const rendered = useMemo(() => {
+    // Split by newlines first
+    return text.split('\n').map((line, lineIndex) => {
+      // Process inline markdown: **bold** and `code`
+      const parts: (string | JSX.Element)[] = [];
+      let lastIndex = 0;
+      const regex = /(\*\*(.+?)\*\*)|(`(.+?)`)/g;
+      let match;
+
+      while ((match = regex.exec(line)) !== null) {
+        // Add text before match
+        if (match.index > lastIndex) {
+          parts.push(line.slice(lastIndex, match.index));
+        }
+
+        if (match[2]) {
+          // Bold: **text**
+          parts.push(<strong key={`${lineIndex}-${match.index}`}>{match[2]}</strong>);
+        } else if (match[4]) {
+          // Code: `text`
+          parts.push(
+            <code key={`${lineIndex}-${match.index}`} className="bg-gray-700 px-1 rounded text-sm">
+              {match[4]}
+            </code>
+          );
+        }
+
+        lastIndex = match.index + match[0].length;
+      }
+
+      // Add remaining text
+      if (lastIndex < line.length) {
+        parts.push(line.slice(lastIndex));
+      }
+
+      return (
+        <span key={lineIndex}>
+          {parts.length > 0 ? parts : line}
+          {lineIndex < text.split('\n').length - 1 && <br />}
+        </span>
+      );
+    });
+  }, [text]);
+
+  return <span className={className}>{rendered}</span>;
+}
+
 function QuestionCard({
   question,
   selectedValue,
@@ -506,7 +557,9 @@ function QuestionCard({
 
   return (
     <div className="bg-gray-800 rounded-lg p-6">
-      <p className="font-medium mb-4">{question.questionText}</p>
+      <div className="font-medium mb-4">
+        <SimpleMarkdown text={question.questionText} />
+      </div>
       <div className="space-y-2">
         {question.options.map(option => {
           const isSelected = selectedValue === option.value;
@@ -523,7 +576,9 @@ function QuestionCard({
                   : 'bg-gray-700 hover:bg-gray-600 border-transparent'
               }`}
             >
-              <span className="font-medium">{option.label}</span>
+              <span className="font-medium">
+                <SimpleMarkdown text={option.label} />
+              </span>
               {option.recommended && (
                 <span className="ml-2 text-xs text-green-400">(Recommended)</span>
               )}
