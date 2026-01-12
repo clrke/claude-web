@@ -1646,5 +1646,56 @@ After creating all steps, write the plan to a file and output:
     }
   });
 
+  // Request re-review with optional remarks (Stage 5)
+  app.post('/api/sessions/:projectId/:featureId/re-review', async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+      const { remarks } = req.body as { remarks?: string };
+
+      // Get session
+      const session = await sessionManager.getSession(projectId, featureId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      // Verify we're in Stage 5
+      if (session.currentStage !== 5) {
+        return res.status(400).json({ error: 'Re-review is only available in Stage 5' });
+      }
+
+      const sessionDir = `${projectId}/${featureId}`;
+
+      // Read plan and PR info
+      const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+      const prInfo = await storage.readJson<{ title: string; branch: string; url: string }>(`${sessionDir}/pr.json`);
+
+      if (!plan) {
+        return res.status(404).json({ error: 'Plan not found' });
+      }
+
+      if (!prInfo) {
+        return res.status(404).json({ error: 'PR info not found' });
+      }
+
+      // Return success immediately
+      res.json({ success: true, remarks: remarks || null });
+
+      // Build Stage 5 prompt with user remarks
+      let prompt = buildStage5Prompt(session, plan, prInfo);
+      if (remarks && remarks.trim()) {
+        prompt = `${prompt}\n\n## User Remarks for Re-Review\nThe user has requested a re-review with the following additional remarks:\n\n${remarks.trim()}`;
+      }
+
+      // Spawn Stage 5 review
+      await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+
+      console.log(`Re-review requested for ${featureId}${remarks ? ' with remarks' : ''}`);
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to request re-review';
+      res.status(500).json({ error: message });
+    }
+  });
+
   return app;
 }

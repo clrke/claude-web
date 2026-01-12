@@ -94,8 +94,8 @@ export function ConversationPanel({ projectId, featureId }: ConversationPanelPro
                 No conversation history yet
               </div>
             ) : (
-              conversations.map((entry, index) => (
-                <ConversationEntryCard key={index} entry={entry} index={index} />
+              [...conversations].reverse().map((entry, index) => (
+                <ConversationEntryCard key={index} entry={entry} index={conversations.length - 1 - index} />
               ))
             )}
           </div>
@@ -211,7 +211,14 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
             <div className={`bg-gray-900/50 rounded p-3 font-mono text-sm overflow-y-auto whitespace-pre-wrap ${
               entry.isError ? 'text-red-300' : 'text-gray-300'
             }`}>
-              {truncateText(entry.output, 2000) || '(empty)'}
+              {entry.output ? truncateText(entry.output, 2000) : (
+                entry.status === 'started' ? (
+                  <span className="text-blue-400 flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+                    Waiting for response...
+                  </span>
+                ) : '(empty)'
+              )}
             </div>
           </div>
 

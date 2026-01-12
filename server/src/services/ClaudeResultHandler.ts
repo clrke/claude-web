@@ -369,8 +369,24 @@ export class ClaudeResultHandler {
   ): Promise<void> {
     const conversationPath = `${sessionDir}/conversations.json`;
     const conversations = await this.storage.readJson<ConversationsFile>(conversationPath) || { entries: [] };
-    // Add status: 'completed' if not already set
-    conversations.entries.push({ ...entry, status: entry.status || 'completed' });
+
+    // Find the most recent "started" entry for this stage and update it
+    let startedIndex = -1;
+    for (let i = conversations.entries.length - 1; i >= 0; i--) {
+      if (conversations.entries[i].stage === entry.stage && conversations.entries[i].status === 'started') {
+        startedIndex = i;
+        break;
+      }
+    }
+
+    if (startedIndex !== -1) {
+      // Update the existing "started" entry with completed data
+      conversations.entries[startedIndex] = { ...entry, status: 'completed' };
+    } else {
+      // No "started" entry found, append new entry
+      conversations.entries.push({ ...entry, status: entry.status || 'completed' });
+    }
+
     await this.storage.writeJson(conversationPath, conversations);
   }
 

@@ -10,6 +10,7 @@ export interface ConversationEntry {
   costUsd: number;
   isError: boolean;
   error?: string;
+  status?: 'started' | 'completed';
 }
 
 export interface ExecutionStatus {

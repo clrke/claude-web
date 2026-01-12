@@ -318,6 +318,174 @@ describe('ClaudeResultHandler', () => {
     });
   });
 
+  describe('saveConversationStart', () => {
+    it('should save a "started" conversation entry', async () => {
+      await handler.saveConversationStart(
+        `${mockSession.projectId}/${mockSession.featureId}`,
+        1,
+        'Test prompt'
+      );
+
+      const conversations = await storage.readJson<{ entries: Array<{ status: string; output: string; prompt: string }> }>(
+        `${mockSession.projectId}/${mockSession.featureId}/conversations.json`
+      );
+
+      expect(conversations!.entries).toHaveLength(1);
+      expect(conversations!.entries[0]).toMatchObject({
+        stage: 1,
+        prompt: 'Test prompt',
+        output: '',
+        status: 'started',
+      });
+    });
+
+    it('should have empty output and zero cost for started entries', async () => {
+      await handler.saveConversationStart(
+        `${mockSession.projectId}/${mockSession.featureId}`,
+        2,
+        'Stage 2 prompt'
+      );
+
+      const conversations = await storage.readJson<{ entries: Array<{ output: string; costUsd: number; sessionId: string | null }> }>(
+        `${mockSession.projectId}/${mockSession.featureId}/conversations.json`
+      );
+
+      expect(conversations!.entries[0].output).toBe('');
+      expect(conversations!.entries[0].costUsd).toBe(0);
+      expect(conversations!.entries[0].sessionId).toBeNull();
+    });
+  });
+
+  describe('saveConversation updates started entry', () => {
+    it('should update existing "started" entry instead of appending new one', async () => {
+      // First, save a "started" entry
+      await handler.saveConversationStart(
+        `${mockSession.projectId}/${mockSession.featureId}`,
+        1,
+        'Test prompt'
+      );
+
+      // Now complete via handleStage1Result
+      const result: ClaudeResult = {
+        output: 'Claude completed response',
+        sessionId: 'claude-session-123',
+        costUsd: 0.05,
+        isError: false,
+        parsed: {
+          decisions: [],
+          planSteps: [],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: false,
+          planModeExited: false,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handler.handleStage1Result(mockSession, result, 'Test prompt');
+
+      const conversations = await storage.readJson<{ entries: Array<{ status: string; output: string }> }>(
+        `${mockSession.projectId}/${mockSession.featureId}/conversations.json`
+      );
+
+      // Should have only 1 entry, not 2
+      expect(conversations!.entries).toHaveLength(1);
+      expect(conversations!.entries[0].status).toBe('completed');
+      expect(conversations!.entries[0].output).toBe('Claude completed response');
+    });
+
+    it('should update the correct stage entry when multiple stages exist', async () => {
+      // Save started entries for stages 1 and 2
+      await handler.saveConversationStart(
+        `${mockSession.projectId}/${mockSession.featureId}`,
+        1,
+        'Stage 1 prompt'
+      );
+      await handler.saveConversationStart(
+        `${mockSession.projectId}/${mockSession.featureId}`,
+        2,
+        'Stage 2 prompt'
+      );
+
+      // Complete stage 2
+      const stage2Session = { ...mockSession, currentStage: 2 };
+      const result: ClaudeResult = {
+        output: 'Stage 2 completed',
+        sessionId: 'claude-session-456',
+        costUsd: 0.08,
+        isError: false,
+        parsed: {
+          decisions: [],
+          planSteps: [],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: false,
+          planModeExited: false,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handler.handleStage2Result(stage2Session, result, 'Stage 2 prompt');
+
+      const conversations = await storage.readJson<{ entries: Array<{ stage: number; status: string; output: string }> }>(
+        `${mockSession.projectId}/${mockSession.featureId}/conversations.json`
+      );
+
+      // Should have 2 entries
+      expect(conversations!.entries).toHaveLength(2);
+      // Stage 1 should still be "started"
+      expect(conversations!.entries[0].stage).toBe(1);
+      expect(conversations!.entries[0].status).toBe('started');
+      // Stage 2 should be "completed"
+      expect(conversations!.entries[1].stage).toBe(2);
+      expect(conversations!.entries[1].status).toBe('completed');
+      expect(conversations!.entries[1].output).toBe('Stage 2 completed');
+    });
+
+    it('should append new entry if no started entry exists for that stage', async () => {
+      // No saveConversationStart call - just complete directly
+      const result: ClaudeResult = {
+        output: 'Direct completion',
+        sessionId: 'claude-123',
+        costUsd: 0.03,
+        isError: false,
+        parsed: {
+          decisions: [],
+          planSteps: [],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: false,
+          planModeExited: false,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handler.handleStage1Result(mockSession, result, 'Test prompt');
+
+      const conversations = await storage.readJson<{ entries: Array<{ status: string }> }>(
+        `${mockSession.projectId}/${mockSession.featureId}/conversations.json`
+      );
+
+      expect(conversations!.entries).toHaveLength(1);
+      expect(conversations!.entries[0].status).toBe('completed');
+    });
+  });
+
   describe('updateStatus', () => {
     it('should update status.json with result info', async () => {
       const result: ClaudeResult = {

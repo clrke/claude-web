@@ -206,7 +206,7 @@ export default function SessionView() {
 
           {/* Stage 5: PR Review */}
           {currentStage === 5 && (
-            <PRReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} />
+            <PRReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} projectId={projectId} featureId={featureId} />
           )}
 
           {/* Conversation Panel */}
@@ -691,10 +691,38 @@ function PRCreationSection({ plan, isRunning }: { plan: Plan | null; isRunning?:
   );
 }
 
-function PRReviewSection({ plan, isRunning }: { plan: Plan | null; isRunning?: boolean }) {
+function PRReviewSection({ plan, isRunning, projectId, featureId }: { plan: Plan | null; isRunning?: boolean; projectId?: string; featureId?: string }) {
   const completedSteps = plan?.steps.filter(s => s.status === 'completed').length ?? 0;
   const totalSteps = plan?.steps.length ?? 0;
   const needsReviewSteps = plan?.steps.filter(s => s.status === 'needs_review').length ?? 0;
+
+  const [showReReviewForm, setShowReReviewForm] = useState(false);
+  const [remarks, setRemarks] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleRequestReReview = async () => {
+    if (!projectId || !featureId) return;
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`/api/sessions/${projectId}/${featureId}/re-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ remarks }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to request re-review');
+      }
+
+      setShowReReviewForm(false);
+      setRemarks('');
+    } catch (error) {
+      console.error('Re-review request failed:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -737,6 +765,53 @@ function PRReviewSection({ plan, isRunning }: { plan: Plan | null; isRunning?: b
             </>
           )}
         </div>
+
+        {/* Re-review request form */}
+        {!isRunning && (
+          <div className="mt-4">
+            {!showReReviewForm ? (
+              <button
+                onClick={() => setShowReReviewForm(true)}
+                className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Request Re-Review
+              </button>
+            ) : (
+              <div className="space-y-3 p-4 bg-gray-700/50 rounded-lg">
+                <label className="block text-sm font-medium">Additional Remarks (optional)</label>
+                <textarea
+                  value={remarks}
+                  onChange={(e) => setRemarks(e.target.value)}
+                  placeholder="Add any specific areas to focus on, concerns, or additional context..."
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                  rows={3}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setShowReReviewForm(false);
+                      setRemarks('');
+                    }}
+                    className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-lg text-sm font-medium transition-colors"
+                    disabled={isSubmitting}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRequestReReview}
+                    disabled={isSubmitting}
+                    className="flex-1 px-4 py-2 bg-teal-600 hover:bg-teal-700 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                  >
+                    {isSubmitting ? 'Requesting...' : 'Start Re-Review'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Steps that need review */}
         {needsReviewSteps > 0 && plan && (

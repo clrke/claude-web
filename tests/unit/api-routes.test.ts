@@ -22,7 +22,13 @@ describe('API Routes', () => {
   });
 
   afterEach(async () => {
-    await fs.remove(testDir);
+    // Small delay to allow fire-and-forget async operations to settle
+    await new Promise(resolve => setTimeout(resolve, 100));
+    try {
+      await fs.remove(testDir);
+    } catch {
+      // Ignore cleanup errors - async background operations may still be running
+    }
   });
 
   describe('GET /health', () => {
@@ -379,6 +385,122 @@ describe('API Routes', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ entries: [] });
+    });
+  });
+
+  describe('POST /api/sessions/:projectId/:featureId/re-review', () => {
+    let projectId: string;
+    let featureId: string;
+
+    beforeEach(async () => {
+      // Create a session in Stage 5
+      const session = await sessionManager.createSession({
+        title: 'Test Feature',
+        featureDescription: 'Test description',
+        projectPath: '/test/project',
+      });
+      projectId = session.projectId;
+      featureId = session.featureId;
+
+      // Update session to Stage 5
+      const sessionPath = `${projectId}/${featureId}/session.json`;
+      const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+      sessionData!.currentStage = 5;
+      await storage.writeJson(sessionPath, sessionData);
+
+      // Add plan.json
+      await storage.writeJson(`${projectId}/${featureId}/plan.json`, {
+        version: '1.0',
+        planVersion: 1,
+        sessionId: session.id,
+        isApproved: true,
+        reviewCount: 1,
+        steps: [
+          { id: 'step-1', title: 'Step 1', status: 'completed' },
+        ],
+      });
+
+      // Add pr.json
+      await storage.writeJson(`${projectId}/${featureId}/pr.json`, {
+        title: 'Test PR',
+        branch: 'feature/test',
+        url: 'https://github.com/test/repo/pull/1',
+        createdAt: '2026-01-11T12:00:00Z',
+      });
+    });
+
+    it('should accept re-review request with remarks', async () => {
+      const response = await request(app)
+        .post(`/api/sessions/${projectId}/${featureId}/re-review`)
+        .send({ remarks: 'Please check the error handling' });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        success: true,
+        remarks: 'Please check the error handling',
+      });
+    });
+
+    it('should accept re-review request without remarks', async () => {
+      const response = await request(app)
+        .post(`/api/sessions/${projectId}/${featureId}/re-review`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        success: true,
+        remarks: null,
+      });
+    });
+
+    it('should return 404 for non-existent session', async () => {
+      const response = await request(app)
+        .post('/api/sessions/nonexistent/session/re-review')
+        .send({ remarks: 'test' });
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toMatch(/session not found/i);
+    });
+
+    it('should return 400 if session is not in Stage 5', async () => {
+      // Update session to Stage 3
+      const sessionPath = `${projectId}/${featureId}/session.json`;
+      const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+      sessionData!.currentStage = 3;
+      await storage.writeJson(sessionPath, sessionData);
+
+      const response = await request(app)
+        .post(`/api/sessions/${projectId}/${featureId}/re-review`)
+        .send({ remarks: 'test' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/stage 5/i);
+    });
+
+    it('should return 404 if plan is missing', async () => {
+      // Remove plan.json
+      const planPath = `${projectId}/${featureId}/plan.json`;
+      await storage.delete(planPath);
+
+      const response = await request(app)
+        .post(`/api/sessions/${projectId}/${featureId}/re-review`)
+        .send({ remarks: 'test' });
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toMatch(/plan not found/i);
+    });
+
+    it('should return 404 if PR info is missing', async () => {
+      // Remove pr.json
+      const prPath = `${projectId}/${featureId}/pr.json`;
+      await storage.delete(prPath);
+
+      const response = await request(app)
+        .post(`/api/sessions/${projectId}/${featureId}/re-review`)
+        .send({ remarks: 'test' });
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toMatch(/pr info not found/i);
     });
   });
 });
