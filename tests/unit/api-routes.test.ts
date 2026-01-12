@@ -18,7 +18,8 @@ describe('API Routes', () => {
     await fs.ensureDir(testDir);
     storage = new FileStorageService(testDir);
     sessionManager = new SessionManager(storage);
-    app = createApp(storage, sessionManager);
+    const result = createApp(storage, sessionManager);
+    app = result.app;
   });
 
   afterEach(async () => {
