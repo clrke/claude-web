@@ -289,9 +289,17 @@ ${planStepsText}${planFileReference}
 For each step:
 1. **Start the step** - Announce which step you're working on
 2. **Implement the changes** - Write/modify the necessary code
-3. **Run tests** - Verify the changes work (max 3 fix attempts if tests fail)
-4. **Commit changes** - Create a git commit for the step
-5. **Report completion** - Use the markers below
+3. **Write tests** - Add unit/integration tests for new functionality
+4. **Run tests** - Verify all tests pass (max 3 fix attempts if tests fail)
+5. **Commit changes** - Create a git commit for the step
+6. **Report completion** - Use the markers below
+
+### Test Requirements (MANDATORY)
+- **Every new feature/function MUST have tests**
+- Write tests BEFORE marking a step complete
+- Tests should cover: happy path, edge cases, error handling
+- Match existing test patterns in the codebase
+- If no test framework exists, set one up as the first step
 
 ### Progress Markers (Required)
 
@@ -311,8 +319,10 @@ message: Brief status message
 **After completing a step**:
 \`\`\`
 [STEP_COMPLETE id="step-X"]
-Brief summary of what was implemented.
+Summary: Brief summary of what was implemented.
 Files modified: file1.ts, file2.ts
+Tests added: test1.spec.ts, test2.spec.ts
+Tests passing: Yes
 [/STEP_COMPLETE]
 \`\`\`
 
@@ -333,8 +343,11 @@ Note: When a blocker is raised, execution pauses. The user will answer and you'l
 Summary: What was implemented
 Steps completed: X of Y
 Files modified: list of key files
+Tests added: list of test files
+All tests passing: Yes/No
 [/IMPLEMENTATION_COMPLETE]
 \`\`\`
+Note: Do NOT output IMPLEMENTATION_COMPLETE unless all tests are passing.
 
 ### Test Failure Handling
 - If tests fail, attempt to fix the issue (up to 3 attempts per step)

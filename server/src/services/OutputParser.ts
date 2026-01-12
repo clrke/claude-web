@@ -24,6 +24,8 @@ export interface ParsedPlanStep {
 export interface ParsedStepComplete {
   id: string;
   summary: string;
+  testsAdded: string[];
+  testsPassing: boolean;
 }
 
 export interface ParsedImplementationStatus {
@@ -53,6 +55,8 @@ export interface ParsedMarker {
   implementationComplete: boolean;
   implementationSummary: string | null;
   implementationStatus: ParsedImplementationStatus | null;
+  allTestsPassing: boolean;
+  testsAdded: string[];
   prCreated: ParsedPRCreated | null;
   planApproved: boolean;
 }
@@ -60,6 +64,7 @@ export interface ParsedMarker {
 export class OutputParser {
   parse(input: string): ParsedMarker {
     const stepsCompleted = this.parseAllStepsComplete(input);
+    const implementationInfo = this.parseImplementationComplete(input);
     return {
       decisions: this.parseDecisions(input),
       planSteps: this.parsePlanSteps(input),
@@ -69,8 +74,10 @@ export class OutputParser {
       planModeExited: input.includes('[PLAN_MODE_EXITED]'),
       planFilePath: this.parsePlanFile(input),
       implementationComplete: input.includes('[IMPLEMENTATION_COMPLETE]'),
-      implementationSummary: this.parseImplementationSummary(input),
+      implementationSummary: implementationInfo.summary,
       implementationStatus: this.parseImplementationStatus(input),
+      allTestsPassing: implementationInfo.allTestsPassing,
+      testsAdded: implementationInfo.testsAdded,
       prCreated: this.parsePRCreated(input),
       planApproved: /^\[PLAN_APPROVED\]$/m.test(input),
     };
@@ -151,9 +158,25 @@ export class OutputParser {
 
     let match;
     while ((match = regex.exec(input)) !== null) {
+      const content = match[2].trim();
+
+      // Parse tests added (e.g., "Tests added: file1.spec.ts, file2.spec.ts")
+      const testsMatch = content.match(/Tests added:\s*(.+)/i);
+      const testsAdded = testsMatch
+        ? testsMatch[1].split(',').map(t => t.trim()).filter(t => t && t.toLowerCase() !== 'none')
+        : [];
+
+      // Parse tests passing status
+      const passingMatch = content.match(/Tests passing:\s*(yes|no|true|false)/i);
+      const testsPassing = passingMatch
+        ? ['yes', 'true'].includes(passingMatch[1].toLowerCase())
+        : true; // Assume passing if not specified
+
       steps.push({
         id: match[1],
-        summary: match[2].trim(),
+        summary: content,
+        testsAdded,
+        testsPassing,
       });
     }
 
@@ -166,10 +189,29 @@ export class OutputParser {
     return match ? match[1] : null;
   }
 
-  private parseImplementationSummary(input: string): string | null {
+  private parseImplementationComplete(input: string): { summary: string | null; allTestsPassing: boolean; testsAdded: string[] } {
     const regex = /\[IMPLEMENTATION_COMPLETE\]([\s\S]*?)\[\/IMPLEMENTATION_COMPLETE\]/;
     const match = input.match(regex);
-    return match ? match[1].trim() : null;
+
+    if (!match) {
+      return { summary: null, allTestsPassing: false, testsAdded: [] };
+    }
+
+    const content = match[1].trim();
+
+    // Parse "All tests passing: Yes/No"
+    const passingMatch = content.match(/All tests passing:\s*(yes|no|true|false)/i);
+    const allTestsPassing = passingMatch
+      ? ['yes', 'true'].includes(passingMatch[1].toLowerCase())
+      : false;
+
+    // Parse "Tests added: file1.spec.ts, file2.spec.ts"
+    const testsMatch = content.match(/Tests added:\s*(.+)/i);
+    const testsAdded = testsMatch
+      ? testsMatch[1].split(',').map(t => t.trim()).filter(t => t && t.toLowerCase() !== 'none')
+      : [];
+
+    return { summary: content, allTestsPassing, testsAdded };
   }
 
   private parseImplementationStatus(input: string): ParsedImplementationStatus | null {

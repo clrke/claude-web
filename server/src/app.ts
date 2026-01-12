@@ -310,7 +310,7 @@ async function spawnStage3Implementation(
 
     // Handle Stage 3→4 transition when implementation complete
     if (implementationComplete) {
-      await handleStage3Completion(session, sessionDir, storage, sessionManager, eventBroadcaster);
+      await handleStage3Completion(session, sessionDir, storage, sessionManager, eventBroadcaster, result);
     }
 
     console.log(`Stage 3 ${implementationComplete ? 'completed' : (hasBlocker ? 'blocked' : 'in progress')} for ${session.featureId}`);
@@ -322,13 +322,15 @@ async function spawnStage3Implementation(
 
 /**
  * Handle Stage 3 completion - transition to Stage 4 when implementation complete
+ * Requires all tests to be passing before allowing transition.
  */
 async function handleStage3Completion(
   session: Session,
   sessionDir: string,
   storage: FileStorageService,
   sessionManager: SessionManager,
-  eventBroadcaster: EventBroadcaster | undefined
+  eventBroadcaster: EventBroadcaster | undefined,
+  result: ClaudeResult
 ): Promise<void> {
   // Verify all steps are completed
   const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
@@ -340,7 +342,15 @@ async function handleStage3Completion(
     return;
   }
 
-  console.log(`All ${plan.steps.length} steps completed, transitioning to Stage 4 for ${session.featureId}`);
+  // Verify all tests are passing (REQUIRED for Stage 3→4 transition)
+  if (!result.parsed.allTestsPassing) {
+    console.log(`Stage 3 cannot transition: tests not passing for ${session.featureId}`);
+    // TODO: Could raise a blocker question here asking user to confirm proceeding without tests
+    return;
+  }
+
+  const testsCount = result.parsed.testsAdded.length;
+  console.log(`All ${plan.steps.length} steps completed with ${testsCount} tests passing, transitioning to Stage 4 for ${session.featureId}`);
 
   // Transition to Stage 4
   const previousStage = session.currentStage;
