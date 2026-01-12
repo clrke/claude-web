@@ -41,6 +41,9 @@ export default function SessionView() {
     setImplementationProgress,
   } = useSessionStore();
 
+  // Modal state (must be before early returns to maintain hooks order)
+  const [showPlanModal, setShowPlanModal] = useState(false);
+
   // Socket.IO event handlers
   const handleExecutionStatus = useCallback((data: { status: 'running' | 'idle' | 'error'; action: string; timestamp: string }) => {
     setExecutionStatus(data);
@@ -150,6 +153,11 @@ export default function SessionView() {
   const currentStage = session.currentStage;
 
   return (
+    <>
+    {/* Plan Modal */}
+    {showPlanModal && plan && (
+      <PlanModal plan={plan} onClose={() => setShowPlanModal(false)} />
+    )}
     <div className="container mx-auto px-4 py-8">
       {/* Header */}
       <header className="mb-8">
@@ -229,6 +237,19 @@ export default function SessionView() {
                 <dd className="capitalize">{session.status}</dd>
               </div>
             </dl>
+
+            {/* View Plan Button */}
+            {plan && plan.steps.length > 0 && (
+              <button
+                onClick={() => setShowPlanModal(true)}
+                className="mt-4 w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                View Full Plan ({plan.steps.length} steps)
+              </button>
+            )}
           </div>
 
           {/* Acceptance Criteria */}
@@ -253,6 +274,7 @@ export default function SessionView() {
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -703,6 +725,111 @@ function PRReviewSection({ plan }: { plan: Plan | null }) {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function PlanModal({ plan, onClose }: { plan: Plan; onClose: () => void }) {
+  const completedCount = plan.steps.filter(s => s.status === 'completed').length;
+  const inProgressCount = plan.steps.filter(s => s.status === 'in_progress').length;
+  const needsReviewCount = plan.steps.filter(s => s.status === 'needs_review').length;
+
+  const STATUS_ICONS: Record<string, JSX.Element> = {
+    completed: (
+      <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+      </svg>
+    ),
+    in_progress: (
+      <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+    ),
+    needs_review: (
+      <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+    ),
+    blocked: (
+      <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+      </svg>
+    ),
+    pending: (
+      <div className="w-5 h-5 rounded-full border-2 border-gray-500" />
+    ),
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onClick={onClose}>
+      <div
+        className="bg-gray-900 rounded-xl max-w-3xl w-full max-h-[80vh] overflow-hidden shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-700">
+          <div>
+            <h2 className="text-xl font-semibold">Implementation Plan</h2>
+            <p className="text-sm text-gray-400 mt-1">
+              v{plan.planVersion} | {completedCount}/{plan.steps.length} completed
+              {inProgressCount > 0 && ` | ${inProgressCount} in progress`}
+              {needsReviewCount > 0 && ` | ${needsReviewCount} needs review`}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Plan Steps */}
+        <div className="p-6 overflow-y-auto max-h-[calc(80vh-120px)]">
+          <div className="space-y-4">
+            {plan.steps.map((step, index) => (
+              <div
+                key={step.id}
+                className={`p-4 rounded-lg ${
+                  step.status === 'completed'
+                    ? 'bg-green-900/20 border border-green-800/50'
+                    : step.status === 'in_progress'
+                    ? 'bg-blue-900/20 border border-blue-800/50'
+                    : step.status === 'needs_review'
+                    ? 'bg-yellow-900/20 border border-yellow-800/50'
+                    : step.status === 'blocked'
+                    ? 'bg-red-900/20 border border-red-800/50'
+                    : 'bg-gray-800/50 border border-gray-700/50'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 mt-0.5">
+                    {STATUS_ICONS[step.status] || STATUS_ICONS.pending}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500 text-sm font-mono">#{index + 1}</span>
+                      <h3 className="font-medium">{step.title}</h3>
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        step.status === 'completed' ? 'bg-green-900/50 text-green-400' :
+                        step.status === 'in_progress' ? 'bg-blue-900/50 text-blue-400' :
+                        step.status === 'needs_review' ? 'bg-yellow-900/50 text-yellow-400' :
+                        step.status === 'blocked' ? 'bg-red-900/50 text-red-400' :
+                        'bg-gray-700 text-gray-400'
+                      }`}>
+                        {step.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                    {step.description && (
+                      <p className="text-gray-400 text-sm mt-2 whitespace-pre-wrap">{step.description}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
