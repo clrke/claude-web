@@ -738,7 +738,8 @@ async function executeStage3Steps(
   }
 
   // Main execution loop - process steps one at a time
-  while (true) {
+  let hasMoreSteps = true;
+  while (hasMoreSteps) {
     const nextStep = getNextReadyStep(plan);
 
     if (!nextStep) {
@@ -752,13 +753,13 @@ async function executeStage3Steps(
           session, sessionDir, storage, sessionManager,
           resultHandler, eventBroadcaster, null
         );
-        return;
       } else {
         // Some steps are blocked or have unmet dependencies
         console.log(`No more steps ready for ${session.featureId}, waiting for user input`);
         eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_waiting');
-        return;
       }
+      hasMoreSteps = false;
+      continue;
     }
 
     // Execute the next step
@@ -771,19 +772,24 @@ async function executeStage3Steps(
       // Step is blocked - pause and wait for user
       console.log(`Step [${nextStep.id}] blocked, waiting for user input`);
       eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_blocked');
-      return;
+      hasMoreSteps = false;
+      continue;
     }
 
     if (!result.stepCompleted) {
       // Step didn't complete (unexpected) - log and stop
       console.warn(`Step [${nextStep.id}] did not complete, stopping execution`);
       eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_waiting');
-      return;
+      hasMoreSteps = false;
+      continue;
     }
 
     // Reload plan for next iteration
     plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
-    if (!plan) return;
+    if (!plan) {
+      hasMoreSteps = false;
+      continue;
+    }
 
     console.log(`Step [${nextStep.id}] completed, checking for next step...`);
   }
