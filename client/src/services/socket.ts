@@ -1,53 +1,18 @@
 import { io, Socket } from 'socket.io-client';
-import type { Question, Plan } from '@claude-code-web/shared';
+import type {
+  ServerToClientEvents,
+  ClientToServerEvents,
+} from '@claude-code-web/shared';
 
-export interface SocketEvents {
-  // Incoming events
-  'stage.changed': (data: {
-    sessionId: string;
-    previousStage: number;
-    currentStage: number;
-    status: string;
-    timestamp: string;
-  }) => void;
-  'questions.batch': (data: {
-    count: number;
-    questions: Question[];
-    timestamp: string;
-  }) => void;
-  'question.asked': (data: Question & { timestamp: string }) => void;
-  'question.answered': (data: {
-    id: string;
-    answer: Question['answer'];
-    answeredAt: string;
-    timestamp: string;
-  }) => void;
-  'plan.updated': (data: {
-    planVersion: number;
-    stepCount: number;
-    isApproved: boolean;
-    steps: Plan['steps'];
-    timestamp: string;
-  }) => void;
-  'plan.approved': (data: {
-    planVersion: number;
-    timestamp: string;
-  }) => void;
-  'execution.status': (data: {
-    status: 'running' | 'idle' | 'error';
-    action: string;
-    timestamp: string;
-  }) => void;
-  'claude.output': (data: {
-    output: string;
-    isComplete: boolean;
-    timestamp: string;
-  }) => void;
-}
+// Re-export the shared socket event types for convenience
+export type { ServerToClientEvents, ClientToServerEvents };
 
-let socket: Socket | null = null;
+// Alias for backward compatibility
+export type SocketEvents = ServerToClientEvents;
 
-export function getSocket(): Socket {
+let socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
+
+export function getSocket(): Socket<ServerToClientEvents, ClientToServerEvents> {
   if (!socket) {
     socket = io('/', {
       autoConnect: false,
@@ -59,7 +24,7 @@ export function getSocket(): Socket {
   return socket;
 }
 
-export function connectToSession(projectId: string, featureId: string): Socket {
+export function connectToSession(projectId: string, featureId: string): Socket<ServerToClientEvents, ClientToServerEvents> {
   const socket = getSocket();
 
   if (!socket.connected) {

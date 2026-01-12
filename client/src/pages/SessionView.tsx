@@ -4,7 +4,20 @@ import { useSessionStore } from '../stores/sessionStore';
 import { TimelineView } from '../components/PlanEditor';
 import { ConversationPanel } from '../components/ConversationPanel';
 import { connectToSession, disconnectFromSession, getSocket } from '../services/socket';
-import type { PlanStepStatus, ImplementationProgressEvent } from '@claude-code-web/shared';
+import type {
+  ImplementationProgressEvent,
+  PlanUpdatedEvent,
+  QuestionsBatchEvent,
+  ExecutionStatusEvent,
+  ClaudeOutputEvent,
+  StageChangedEvent,
+  StepStartedEvent,
+  StepCompletedEvent,
+  Session,
+  Plan,
+  PlanStep,
+  Question,
+} from '@claude-code-web/shared';
 
 const STAGE_LABELS: Record<number, string> = {
   1: 'Feature Discovery',
@@ -48,11 +61,11 @@ export default function SessionView() {
   const [isTransitioning, setIsTransitioning] = useState(false);
 
   // Socket.IO event handlers
-  const handleExecutionStatus = useCallback((data: { status: 'running' | 'idle' | 'error'; action: string; timestamp: string }) => {
+  const handleExecutionStatus = useCallback((data: ExecutionStatusEvent) => {
     setExecutionStatus(data);
   }, [setExecutionStatus]);
 
-  const handleClaudeOutput = useCallback((data: { output: string; isComplete: boolean }) => {
+  const handleClaudeOutput = useCallback((data: ClaudeOutputEvent) => {
     appendLiveOutput(data.output, data.isComplete);
     // Refresh conversations when output is complete
     if (data.isComplete && projectId && featureId) {
@@ -60,19 +73,19 @@ export default function SessionView() {
     }
   }, [appendLiveOutput, fetchConversations, projectId, featureId]);
 
-  const handleQuestionsBatch = useCallback((data: { questions: Question[] }) => {
+  const handleQuestionsBatch = useCallback((data: QuestionsBatchEvent) => {
     // Add new questions to the list
     data.questions.forEach(q => addQuestion(q));
   }, [addQuestion]);
 
-  const handlePlanUpdated = useCallback((data: { planVersion: number; steps: Plan['steps']; isApproved: boolean }) => {
+  const handlePlanUpdated = useCallback((data: PlanUpdatedEvent) => {
     const currentPlan = useSessionStore.getState().plan;
     if (currentPlan) {
       setPlan({ ...currentPlan, ...data });
     }
   }, [setPlan]);
 
-  const handleStageChanged = useCallback((data: { currentStage: number; status: string }) => {
+  const handleStageChanged = useCallback((data: StageChangedEvent) => {
     const currentSession = useSessionStore.getState().session;
     if (currentSession) {
       setSession({ ...currentSession, currentStage: data.currentStage, status: data.status as Session['status'] });
@@ -80,11 +93,11 @@ export default function SessionView() {
   }, [setSession]);
 
   // Stage 3 event handlers
-  const handleStepStarted = useCallback((data: { stepId: string }) => {
+  const handleStepStarted = useCallback((data: StepStartedEvent) => {
     updateStepStatus(data.stepId, 'in_progress');
   }, [updateStepStatus]);
 
-  const handleStepCompleted = useCallback((data: { stepId: string; status: PlanStepStatus }) => {
+  const handleStepCompleted = useCallback((data: StepCompletedEvent) => {
     updateStepStatus(data.stepId, data.status);
   }, [updateStepStatus]);
 
@@ -1087,5 +1100,3 @@ function PlanModal({ plan, onClose }: { plan: Plan; onClose: () => void }) {
   );
 }
 
-// Type imports for internal use
-import type { Plan, PlanStep, Question, Session } from '@claude-code-web/shared';
