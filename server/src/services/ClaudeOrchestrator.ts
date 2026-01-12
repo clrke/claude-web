@@ -47,8 +47,8 @@ interface ClaudeJsonOutput {
 }
 
 const STAGE_TOOLS: Record<number, string[]> = {
-  1: ['Read', 'Glob', 'Grep', 'Task'],
-  2: ['Read', 'Glob', 'Grep', 'Task'],
+  1: ['Read', 'Glob', 'Grep', 'Task', 'WebFetch', 'WebSearch'],  // Discovery - read-only + web
+  2: ['Read', 'Glob', 'Grep', 'Task', 'WebFetch', 'WebSearch'],  // Plan review - read-only + web
   3: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'Task'],
   4: ['Read', 'Bash(git:*)', 'Bash(gh:*)'],  // Restricted to git and gh commands for PR creation
   5: ['Read', 'Glob', 'Grep', 'Task', 'Bash(git:diff*)', 'Bash(gh:pr*)'],  // PR review with limited diff/PR access

@@ -70,7 +70,7 @@ export class DecisionValidator {
         '--output-format', 'json',
         '--model', 'haiku',
         // Give Haiku read-only tools to inspect codebase
-        '--allowedTools', 'Read,Glob,Grep',
+        '--allowedTools', 'Read,Glob,Grep,WebFetch,WebSearch',
         '-p', prompt,
       ], {
         cwd: projectPath,

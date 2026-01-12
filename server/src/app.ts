@@ -1415,6 +1415,39 @@ Continue implementing the plan. Pick up where you left off.`;
               );
             }
             return; // Stage 3 handles its own completion
+          } else if (session.currentStage === 5) {
+            // Stage 5: Re-review after user addresses review findings
+            const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+            const prInfo = await storage.readJson<{ title: string; branch: string; url: string }>(`${sessionDir}/pr.json`);
+
+            if (plan) {
+              const reviewAnswersSummary = answeredQuestions.map(q =>
+                `**Issue:** ${q.questionText}\n**Resolution:** ${typeof q.answer?.value === 'string' ? q.answer.value : JSON.stringify(q.answer?.value)}`
+              ).join('\n\n');
+
+              const stage5ResumePrompt = `The user has addressed your review findings:
+
+${reviewAnswersSummary}
+
+Please re-review the PR to verify the issues have been addressed. Check:
+1. Have the user's resolutions adequately addressed the issues?
+2. Are there any remaining concerns?
+3. Is the PR ready to merge?
+
+${prInfo?.url ? `PR URL: ${prInfo.url}` : ''}
+
+If all issues are resolved, output [PR_APPROVED]. Otherwise, raise new [DECISION_NEEDED] markers for any remaining concerns.`;
+
+              await spawnStage5PRReview(
+                session,
+                storage,
+                sessionManager,
+                resultHandler,
+                eventBroadcaster,
+                stage5ResumePrompt
+              );
+            }
+            return; // Stage 5 handles its own completion
           }
 
           // Apply Haiku fallback if no decisions were parsed but output looks like questions

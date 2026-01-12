@@ -44,6 +44,8 @@ export default function SessionView() {
 
   // Modal state (must be before early returns to maintain hooks order)
   const [showPlanModal, setShowPlanModal] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   // Socket.IO event handlers
   const handleExecutionStatus = useCallback((data: { status: 'running' | 'idle' | 'error'; action: string; timestamp: string }) => {
@@ -89,6 +91,31 @@ export default function SessionView() {
   const handleImplementationProgress = useCallback((data: ImplementationProgressEvent) => {
     setImplementationProgress(data);
   }, [setImplementationProgress]);
+
+  // Stage transition handler
+  const handleTransition = useCallback(async (targetStage: number) => {
+    if (!projectId || !featureId || isTransitioning) return;
+
+    setIsTransitioning(true);
+    try {
+      const response = await fetch(`/api/sessions/${projectId}/${featureId}/transition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetStage }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to transition stage');
+      }
+
+      const updatedSession = await response.json();
+      setSession(updatedSession);
+    } catch (error) {
+      console.error('Stage transition failed:', error);
+    } finally {
+      setIsTransitioning(false);
+    }
+  }, [projectId, featureId, isTransitioning, setSession]);
 
   // Fetch session data
   useEffect(() => {
@@ -271,6 +298,64 @@ export default function SessionView() {
                 </li>
               ))}
             </ul>
+          </div>
+
+          {/* Debug Panel */}
+          <div className="bg-gray-800 rounded-lg p-6">
+            <button
+              onClick={() => setShowDebug(!showDebug)}
+              className="w-full flex items-center justify-between text-sm text-gray-400 hover:text-gray-300 transition-colors"
+            >
+              <span className="flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Debug Tools
+              </span>
+              <svg
+                className={`w-4 h-4 transition-transform ${showDebug ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {showDebug && (
+              <div className="mt-4 space-y-3">
+                <p className="text-xs text-gray-500">Force transition to stage:</p>
+                <div className="grid grid-cols-5 gap-1">
+                  {[1, 2, 3, 4, 5].map((stage) => (
+                    <button
+                      key={stage}
+                      onClick={() => handleTransition(stage)}
+                      disabled={isTransitioning || currentStage === stage}
+                      className={`px-2 py-1.5 text-xs rounded transition-colors ${
+                        currentStage === stage
+                          ? 'bg-blue-600 text-white cursor-default'
+                          : isTransitioning
+                          ? 'bg-gray-700 text-gray-500 cursor-wait'
+                          : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                      }`}
+                      title={STAGE_LABELS[stage]}
+                    >
+                      {stage}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Current: Stage {currentStage} ({STAGE_LABELS[currentStage]})
+                </p>
+                {isTransitioning && (
+                  <p className="text-xs text-yellow-400 flex items-center gap-1">
+                    <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
+                    Transitioning...
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
