@@ -73,9 +73,16 @@ IMPORTANT: Do NOT ask questions that can be answered by exploring the codebase:
 - ✅ "The codebase has no rate limiting - which approach should we use?"
 
 ### Phase 3: Generate Plan
-After questions are answered, generate implementation plan:
+After questions are answered, generate implementation plan.
 
-[PLAN_STEP id="1" parent="null" status="pending"]
+**IMPORTANT: The first step MUST be creating and checking out the feature branch:**
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Create feature branch
+Create and checkout feature branch: git checkout -b ${session.featureBranch} from ${session.baseBranch}
+[/PLAN_STEP]
+
+Then add implementation steps:
+[PLAN_STEP id="step-2" parent="step-1" status="pending"]
 Step title here
 Description referencing specific files/modules found during exploration.
 [/PLAN_STEP]

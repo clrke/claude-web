@@ -75,6 +75,71 @@ async function applyHaikuPostProcessing(
 }
 
 /**
+ * Verify PR creation using gh pr list command.
+ * More reliable than parsing Claude's output markers.
+ * Returns PR info if found, null if not.
+ */
+async function verifyPRCreation(
+  projectPath: string,
+  _projectId: string,
+  _featureId: string
+): Promise<{ title: string; branch: string; url: string; number: number; createdAt: string } | null> {
+  const { execSync } = await import('child_process');
+
+  try {
+    // Get current branch name
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      cwd: projectPath,
+      encoding: 'utf-8',
+      timeout: 10000,
+    }).trim();
+
+    // Query GitHub for PRs from this branch
+    // gh pr list --head <branch> --json number,url,title
+    const result = execSync(`gh pr list --head "${branch}" --json number,url,title --limit 1`, {
+      cwd: projectPath,
+      encoding: 'utf-8',
+      timeout: 30000,
+    });
+
+    const prs = JSON.parse(result);
+    if (prs.length === 0) {
+      // No PR found, try querying by state=open
+      const openResult = execSync('gh pr list --state open --json number,url,title,headRefName --limit 10', {
+        cwd: projectPath,
+        encoding: 'utf-8',
+        timeout: 30000,
+      });
+
+      const openPrs = JSON.parse(openResult);
+      const matchingPr = openPrs.find((pr: { headRefName: string }) => pr.headRefName === branch);
+      if (matchingPr) {
+        return {
+          title: matchingPr.title,
+          branch: branch,
+          url: matchingPr.url,
+          number: matchingPr.number,
+          createdAt: new Date().toISOString(),
+        };
+      }
+      return null;
+    }
+
+    const pr = prs[0];
+    return {
+      title: pr.title,
+      branch: branch,
+      url: pr.url,
+      number: pr.number,
+      createdAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error('Error verifying PR creation:', error);
+    return null;
+  }
+}
+
+/**
  * Spawn Stage 2 review Claude. Used by:
  * - Auto-transition from Stage 1 when plan file is created
  * - Manual /transition endpoint (kept for edge cases)
@@ -430,45 +495,42 @@ async function spawnStage4PRCreation(
       eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
     },
   }).then(async (result) => {
-    // Parse PR_CREATED marker from output
-    const prCreatedMatch = result.output.match(/\[PR_CREATED\]([\s\S]*?)\[\/PR_CREATED\]/);
+    // Save Stage 4 conversation first
+    const conversationsPath = `${sessionDir}/conversations.json`;
+    const conversations = await storage.readJson<{ entries: unknown[] }>(conversationsPath) || { entries: [] };
+    conversations.entries.push({
+      stage: 4,
+      timestamp: new Date().toISOString(),
+      prompt: prompt,
+      output: result.output,
+      sessionId: result.sessionId,
+      costUsd: result.costUsd,
+      isError: result.isError,
+      parsed: result.parsed,
+    });
+    await storage.writeJson(conversationsPath, conversations);
 
-    if (prCreatedMatch) {
-      const prContent = prCreatedMatch[1];
-      const getValue = (key: string): string => {
-        const match = prContent.match(new RegExp(`${key}:\\s*(.+)`, 'i'));
-        return match ? match[1].trim() : '';
-      };
+    // Verify PR creation using gh pr list command instead of parsing markers
+    // This is more reliable than relying on Claude's output markers
+    const prInfo = await verifyPRCreation(session.projectPath, session.projectId, session.featureId);
 
-      const prInfo = {
-        title: getValue('Title'),
-        branch: getValue('Branch'),
-        url: getValue('URL'),
-        createdAt: new Date().toISOString(),
-      };
-
+    if (prInfo) {
       // Save PR info
       await storage.writeJson(`${sessionDir}/pr.json`, prInfo);
 
-      // Save Stage 4 conversation
-      const conversationsPath = `${sessionDir}/conversations.json`;
-      const conversations = await storage.readJson<{ entries: unknown[] }>(conversationsPath) || { entries: [] };
-      conversations.entries.push({
-        stage: 4,
-        timestamp: new Date().toISOString(),
-        prompt: prompt,
-        output: result.output,
-        sessionId: result.sessionId,
-        costUsd: result.costUsd,
-        isError: result.isError,
-        parsed: result.parsed,
-      });
-      await storage.writeJson(conversationsPath, conversations);
-
-      console.log(`PR created: ${prInfo.url || prInfo.title}`);
+      console.log(`PR verified: ${prInfo.url || prInfo.title}`);
 
       // Broadcast PR created event
       eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage4_complete');
+
+      // Update status
+      const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
+      if (finalStatus) {
+        finalStatus.status = 'idle';
+        finalStatus.lastAction = 'stage4_complete';
+        finalStatus.lastActionAt = new Date().toISOString();
+        await storage.writeJson(statusPath, finalStatus);
+      }
 
       // Auto-transition to Stage 5 and start PR review
       console.log(`Auto-transitioning to Stage 5 for ${session.featureId}`);
@@ -483,41 +545,23 @@ async function spawnStage4PRCreation(
         await spawnStage5PRReview(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
       }
     } else {
-      console.log(`Stage 4 completed but no PR_CREATED marker found for ${session.featureId}`);
-
-      // Still save the conversation even without PR_CREATED marker
-      const conversationsPath = `${sessionDir}/conversations.json`;
-      const conversations = await storage.readJson<{ entries: unknown[] }>(conversationsPath) || { entries: [] };
-      conversations.entries.push({
-        stage: 4,
-        timestamp: new Date().toISOString(),
-        prompt: prompt,
-        output: result.output,
-        sessionId: result.sessionId,
-        costUsd: result.costUsd,
-        isError: result.isError || true, // Mark as error since no PR was created
-        error: 'No PR_CREATED marker found in output',
-        parsed: result.parsed,
-        status: 'completed',
-      });
-      await storage.writeJson(conversationsPath, conversations);
+      console.log(`Stage 4 completed but no PR found via gh pr list for ${session.featureId}`);
 
       eventBroadcaster?.executionStatus(
         session.projectId,
         session.featureId,
         'error',
-        'stage4_no_pr_marker'
+        'stage4_no_pr_found'
       );
-    }
 
-    // Update status (mark as error if no PR_CREATED marker)
-    const hasPR = !!result.output.match(/\[PR_CREATED\]/);
-    const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
-    if (finalStatus) {
-      finalStatus.status = (result.isError || !hasPR) ? 'error' : 'idle';
-      finalStatus.lastAction = result.isError ? 'stage4_error' : (!hasPR ? 'stage4_no_pr_marker' : 'stage4_complete');
-      finalStatus.lastActionAt = new Date().toISOString();
-      await storage.writeJson(statusPath, finalStatus);
+      // Update status as error
+      const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
+      if (finalStatus) {
+        finalStatus.status = 'error';
+        finalStatus.lastAction = 'stage4_no_pr_found';
+        finalStatus.lastActionAt = new Date().toISOString();
+        await storage.writeJson(statusPath, finalStatus);
+      }
     }
   }).catch((error) => {
     console.error(`Stage 4 spawn error for ${session.featureId}:`, error);
