@@ -23,7 +23,7 @@ ${session.affectedFiles.join('\n')}`
 ${session.technicalNotes}`
     : '';
 
-  return `You are helping implement a new feature. Enter plan mode and study the codebase.
+  return `You are helping implement a new feature. You MUST thoroughly explore the codebase BEFORE asking any questions.
 
 ## Feature
 Title: ${session.title}
@@ -36,44 +36,53 @@ ${affectedFilesSection}
 ${technicalNotesSection}
 
 ## Instructions
-1. Enter plan mode using the EnterPlanMode tool. Output:
-[PLAN_MODE_ENTERED]
 
-2. Within plan mode, spawn domain-specific subagents for parallel codebase exploration:
-   - Frontend Agent: UI components, React patterns, styling
-   - Backend Agent: API endpoints, business logic, middleware
-   - Database Agent: Schema design, queries, data modeling
-   - DevOps Agent: CI/CD pipelines, deployment configs, infrastructure
-   - Test Agent: Test coverage, testing strategies
+### Phase 1: Codebase Exploration (MANDATORY - Do this FIRST)
+You MUST explore the codebase before asking any questions. Use the Task tool to spawn parallel exploration agents:
 
-3. Based on exploration, ask clarifying questions using progressive disclosure:
-   - Start with the most fundamental questions (scope, approach, constraints)
-   - After user answers, ask increasingly detailed questions based on their choices
-   - Each question must include options with a recommended choice
+1. **Architecture Agent**: Find project structure, entry points, main modules
+   - Look for: package.json, tsconfig.json, main entry files
+   - Understand: Build system, dependencies, module organization
 
-4. Format questions as:
+2. **Existing Patterns Agent**: Find similar features already implemented
+   - Search for: Related functionality, coding patterns, conventions
+   - Note: How similar problems were solved, reusable utilities
+
+3. **Integration Points Agent**: Find where the new feature connects
+   - Identify: API routes, database schemas, UI components to modify
+   - Map: Dependencies and data flow
+
+Wait for ALL exploration agents to complete before proceeding.
+
+### Phase 2: Ask Informed Questions
+Only AFTER exploration, ask questions that couldn't be answered by reading the code:
+
 [DECISION_NEEDED priority="1|2|3" category="scope|approach|technical|design"]
-Question here?
+Question here? (Reference what you found: "I see X pattern in the codebase, should we follow it or...")
 - Option A: Description (recommended)
 - Option B: Description
 - Option C: Description
 [/DECISION_NEEDED]
 
-   Priority 1 = fundamental (ask first), Priority 2 = detailed, Priority 3 = refinement
+Priority 1 = fundamental (scope, approach), Priority 2 = technical details, Priority 3 = refinements
 
-5. After all questions are answered, generate an implementation plan within plan mode.
+IMPORTANT: Do NOT ask questions that can be answered by exploring the codebase:
+- ❌ "What database are you using?" → Read the code to find out
+- ❌ "How is auth currently handled?" → Explore and find out
+- ✅ "I see you use JWT auth - should the new feature use the same pattern or try OAuth?"
+- ✅ "The codebase has no rate limiting - which approach should we use?"
 
-6. Format plan steps as:
+### Phase 3: Generate Plan
+After questions are answered, generate implementation plan:
+
 [PLAN_STEP id="1" parent="null" status="pending"]
 Step title here
-Description of what this step accomplishes.
+Description referencing specific files/modules found during exploration.
 [/PLAN_STEP]
 
-7. Exit plan mode with ExitPlanMode when ready for user approval. Output:
-[PLAN_MODE_EXITED]
-
-8. When you create a plan file, output the file path so the server can track it:
-[PLAN_FILE path="/path/to/plan/file.md"]`;
+### Phase 4: Complete
+1. Write plan to file and output: [PLAN_FILE path="/path/to/plan.md"]
+2. Exit plan mode and output: [PLAN_MODE_EXITED]`;
 }
 
 /**
