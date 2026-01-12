@@ -87,7 +87,7 @@ export function ConversationPanel({ projectId, featureId }: ConversationPanelPro
           )}
 
           {/* Conversation history */}
-          <div className="max-h-96 overflow-y-auto">
+          <div className="overflow-y-auto">
             {conversations.length === 0 && !isRunning ? (
               <div className="p-8 text-center text-gray-500">
                 No conversation history yet
@@ -178,7 +178,7 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
           {/* Prompt */}
           <div>
             <h4 className="text-sm font-medium text-gray-400 mb-2">Prompt</h4>
-            <div className="bg-gray-900/50 rounded p-3 font-mono text-sm text-gray-300 max-h-48 overflow-y-auto whitespace-pre-wrap">
+            <div className="bg-gray-900/50 rounded p-3 font-mono text-sm text-gray-300 overflow-y-auto whitespace-pre-wrap">
               {truncateText(entry.prompt, 2000)}
             </div>
           </div>
@@ -193,7 +193,7 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
                 </span>
               )}
             </h4>
-            <div className={`bg-gray-900/50 rounded p-3 font-mono text-sm max-h-64 overflow-y-auto whitespace-pre-wrap ${
+            <div className={`bg-gray-900/50 rounded p-3 font-mono text-sm overflow-y-auto whitespace-pre-wrap ${
               entry.isError ? 'text-red-300' : 'text-gray-300'
             }`}>
               {truncateText(entry.output, 2000) || '(empty)'}

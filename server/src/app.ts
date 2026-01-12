@@ -575,6 +575,49 @@ export function createApp(
             // Apply Haiku fallback if no decisions were parsed but output looks like questions
             const extractedCount = await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
 
+            // Check if we need to auto-resume: Stage 1, no plan, no unanswered questions
+            // This handles the case where validation filtered all new questions
+            if (session.currentStage === 1 && !result.isError && !result.parsed.planFilePath) {
+              const questionsData = await storage.readJson<{ questions: Question[] }>(`${sessionDir}/questions.json`);
+              const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+              const unansweredCount = questionsData?.questions.filter(q => !q.answer).length || 0;
+              const planStepsCount = plan?.steps?.length || 0;
+
+              if (unansweredCount === 0 && planStepsCount === 0) {
+                console.log(`No unanswered questions and no plan - auto-resuming to create plan for ${featureId}`);
+                // Resume Claude to create the plan
+                const createPlanPrompt = `All questions have been answered. Now create the implementation plan.
+
+Generate the plan using [PLAN_STEP] markers:
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Step title
+Step description referencing specific files found during exploration.
+[/PLAN_STEP]
+
+After creating all steps, write the plan to a file and output:
+[PLAN_FILE path="/path/to/plan.md"]
+[PLAN_MODE_EXITED]`;
+
+                // Fire and forget - spawn Claude to create plan
+                orchestrator.spawn({
+                  prompt: createPlanPrompt,
+                  projectPath: session.projectPath,
+                  sessionId: session.claudeSessionId || undefined,
+                  onOutput: (output, isComplete) => {
+                    eventBroadcaster?.claudeOutput(projectId, featureId, output, isComplete);
+                  },
+                }).then(async (planResult) => {
+                  await resultHandler.handleStage1Result(session, planResult, createPlanPrompt);
+                  if (!planResult.isError) {
+                    await handleStage1Completion(session, planResult, storage, sessionManager, resultHandler, eventBroadcaster);
+                  }
+                  console.log(`Plan creation ${planResult.isError ? 'failed' : 'completed'} for ${featureId}`);
+                }).catch((error) => {
+                  console.error(`Plan creation error for ${featureId}:`, error);
+                });
+              }
+            }
+
             // Broadcast events
             if (eventBroadcaster) {
               if (result.parsed.decisions.length > 0) {
@@ -749,6 +792,47 @@ export function createApp(
 
           // Apply Haiku fallback if no decisions were parsed but output looks like questions
           const extractedCount = await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
+
+          // Check if we need to auto-resume: Stage 1, no plan, no unanswered questions
+          // This handles the case where validation filtered all new questions
+          if (session.currentStage === 1 && !result.isError && !result.parsed.planFilePath) {
+            const questionsData = await storage.readJson<{ questions: Question[] }>(`${sessionDir}/questions.json`);
+            const planData = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+            const unansweredCount = questionsData?.questions.filter(q => !q.answer).length || 0;
+            const planStepsCount = planData?.steps?.length || 0;
+
+            if (unansweredCount === 0 && planStepsCount === 0) {
+              console.log(`No unanswered questions and no plan - auto-resuming to create plan for ${featureId}`);
+              const createPlanPrompt = `All questions have been answered. Now create the implementation plan.
+
+Generate the plan using [PLAN_STEP] markers:
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Step title
+Step description referencing specific files found during exploration.
+[/PLAN_STEP]
+
+After creating all steps, write the plan to a file and output:
+[PLAN_FILE path="/path/to/plan.md"]
+[PLAN_MODE_EXITED]`;
+
+              orchestrator.spawn({
+                prompt: createPlanPrompt,
+                projectPath: session.projectPath,
+                sessionId: session.claudeSessionId || undefined,
+                onOutput: (output, isComplete) => {
+                  eventBroadcaster?.claudeOutput(projectId, featureId, output, isComplete);
+                },
+              }).then(async (planResult) => {
+                await resultHandler.handleStage1Result(session, planResult, createPlanPrompt);
+                if (!planResult.isError) {
+                  await handleStage1Completion(session, planResult, storage, sessionManager, resultHandler, eventBroadcaster);
+                }
+                console.log(`Plan creation ${planResult.isError ? 'failed' : 'completed'} for ${featureId}`);
+              }).catch((error) => {
+                console.error(`Plan creation error for ${featureId}:`, error);
+              });
+            }
+          }
 
           // Broadcast events
           if (eventBroadcaster) {

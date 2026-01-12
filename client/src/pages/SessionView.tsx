@@ -331,6 +331,26 @@ function QuestionCard({
   selectedValue?: string;
   onSelect: (value: string) => void;
 }) {
+  const [showOther, setShowOther] = useState(false);
+  const [otherText, setOtherText] = useState('');
+
+  // Check if selected value is a custom "other" answer (not in options)
+  const isOtherSelected = selectedValue && !question.options.some(o => o.value === selectedValue);
+
+  const handleOtherToggle = () => {
+    setShowOther(true);
+    if (otherText) {
+      onSelect(`other: ${otherText}`);
+    }
+  };
+
+  const handleOtherTextChange = (text: string) => {
+    setOtherText(text);
+    if (text) {
+      onSelect(`other: ${text}`);
+    }
+  };
+
   return (
     <div className="bg-gray-800 rounded-lg p-6">
       <p className="font-medium mb-4">{question.questionText}</p>
@@ -340,7 +360,10 @@ function QuestionCard({
           return (
             <button
               key={option.value}
-              onClick={() => onSelect(option.value)}
+              onClick={() => {
+                setShowOther(false);
+                onSelect(option.value);
+              }}
               className={`w-full text-left px-4 py-3 rounded-lg transition-colors border-2 ${
                 isSelected
                   ? 'bg-blue-900/50 border-blue-500'
@@ -357,6 +380,34 @@ function QuestionCard({
             </button>
           );
         })}
+
+        {/* Other option */}
+        <button
+          onClick={handleOtherToggle}
+          className={`w-full text-left px-4 py-3 rounded-lg transition-colors border-2 ${
+            showOther || isOtherSelected
+              ? 'bg-blue-900/50 border-blue-500'
+              : 'bg-gray-700 hover:bg-gray-600 border-transparent'
+          }`}
+        >
+          <span className="font-medium">Other (custom answer)</span>
+          {(showOther || isOtherSelected) && (
+            <span className="float-right text-blue-400">✓</span>
+          )}
+        </button>
+
+        {/* Other text input */}
+        {(showOther || isOtherSelected) && (
+          <div className="mt-2">
+            <textarea
+              value={otherText || (isOtherSelected ? selectedValue?.replace('other: ', '') : '')}
+              onChange={(e) => handleOtherTextChange(e.target.value)}
+              placeholder="Type your custom answer..."
+              className="w-full px-4 py-3 bg-gray-700 border-2 border-blue-500 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows={3}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
