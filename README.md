@@ -1610,16 +1610,22 @@ Question here?
 
 5. After all questions are answered, generate an implementation plan within plan mode.
 
-6. Format plan steps as:
-[PLAN_STEP id="1" parent="null" status="pending"]
+6. **IMPORTANT: The first step MUST be creating the feature branch:**
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Create feature branch
+Create and checkout feature branch: git checkout -b {{featureBranch}} from {{baseBranch}}
+[/PLAN_STEP]
+
+7. Format subsequent implementation steps as:
+[PLAN_STEP id="step-2" parent="step-1" status="pending"]
 Step title here
 Description of what this step accomplishes.
 [/PLAN_STEP]
 
-7. Exit plan mode with ExitPlanMode when ready for user approval. Output:
+8. Exit plan mode with ExitPlanMode when ready for user approval. Output:
 [PLAN_MODE_EXITED]
 
-8. When you create a plan file, output the file path so the server can track it:
+9. When you create a plan file, output the file path so the server can track it:
 [PLAN_FILE path="/path/to/plan/file.md"]
 ```
 
@@ -1772,14 +1778,35 @@ You are creating a pull request for completed implementation.
 {{testResults}}
 
 ## Instructions
-1. Use the Task tool to spawn subagents to review changes from different perspectives.
 
-2. Create a pull request with:
-   - Clear, descriptive title
-   - Summary of changes (what and why)
-   - Test plan for reviewers
+### Phase 1: Review Changes
+Use the Task tool to spawn subagents to review changes from different perspectives.
 
-3. Output PR details as:
+### Phase 2: Prepare PR Content
+Based on the review, prepare:
+- Clear, descriptive title (under 72 chars)
+- Summary of changes (what and why)
+- Test plan for reviewers
+
+### Phase 3: Prepare Git State (MANDATORY)
+Before creating the PR, ensure the repository is in the correct state:
+
+1. **Verify branch**: Check current branch with `git branch --show-current`
+   - If NOT on {{featureBranch}}, checkout: `git checkout {{featureBranch}}`
+   - If branch doesn't exist, create it: `git checkout -b {{featureBranch}}`
+
+2. **Commit any uncommitted changes**: Run `git status`
+   - If there are staged/unstaged changes, commit them
+   - Use: `git add -A && git commit -m "feat: <description>"`
+
+3. **Push to remote**: `git push -u origin {{featureBranch}}`
+
+### Phase 4: Create or Update the PR
+1. Check if PR already exists: `gh pr list --head {{featureBranch}}`
+2. If PR exists, update it: `gh pr edit <number> --title "..." --body "..."`
+3. If no PR exists, create it: `gh pr create --base {{baseBranch}} --head {{featureBranch}} --title "..." --body "..."`
+
+### Output
 [PR_CREATED]
 Title: {{prTitle}}
 Branch: {{featureBranch}} → {{baseBranch}}
@@ -1791,7 +1818,11 @@ Branch: {{featureBranch}} → {{baseBranch}}
 {{testPlan}}
 [/PR_CREATED]
 
-4. Use `gh pr create` to create the actual PR.
+### Important Rules
+1. ALWAYS verify you're on the correct feature branch before any git operations
+2. ALWAYS commit and push changes before creating/updating the PR
+3. Update existing PR if one exists, otherwise create new
+4. Return the PR URL in the output
 ```
 
 #### Stage 5: PR Review

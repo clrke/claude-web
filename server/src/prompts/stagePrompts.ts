@@ -509,10 +509,24 @@ Based on the review, prepare:
    - Automated test coverage summary
    - Edge cases to verify
 
-### Phase 3: Create the PR
-1. First, ensure all changes are committed
-2. Push the branch to remote if not already pushed
-3. Use \`gh pr create\` to create the pull request
+### Phase 3: Prepare Git State (MANDATORY)
+Before creating the PR, ensure the repository is in the correct state:
+
+1. **Verify branch**: Check current branch with \`git branch --show-current\`
+   - If NOT on \`${session.featureBranch}\`, checkout: \`git checkout ${session.featureBranch}\`
+   - If branch doesn't exist, create it: \`git checkout -b ${session.featureBranch}\`
+
+2. **Commit any uncommitted changes**: Run \`git status\`
+   - If there are staged/unstaged changes, commit them with a descriptive message
+   - Use: \`git add -A && git commit -m "feat: <description>"\`
+
+3. **Push to remote**: \`git push -u origin ${session.featureBranch}\`
+   - This ensures the branch exists on the remote before creating the PR
+
+### Phase 4: Create or Update the PR
+1. Check if PR already exists: \`gh pr list --head ${session.featureBranch}\`
+2. If PR exists, update it: \`gh pr edit <number> --title "..." --body "..."\`
+3. If no PR exists, create it: \`gh pr create --base ${session.baseBranch} --head ${session.featureBranch} --title "..." --body "..."\`
 
 ### Progress Markers (Required)
 
@@ -540,11 +554,13 @@ URL: {{prUrl}}
 \`\`\`
 
 ### Important Rules
-1. Review changes BEFORE creating the PR
-2. Include a clear, actionable test plan
-3. Reference the original feature description
-4. Use \`gh pr create\` with --title and --body flags
-5. Return the PR URL in the output`;
+1. ALWAYS verify you're on the correct feature branch before any git operations
+2. ALWAYS commit and push changes before creating/updating the PR
+3. Review changes BEFORE creating the PR
+4. Include a clear, actionable test plan
+5. Reference the original feature description
+6. Update existing PR if one exists, otherwise create new
+7. Return the PR URL in the output`;
 }
 
 /**
