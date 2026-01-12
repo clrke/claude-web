@@ -59,7 +59,9 @@ export interface ParsedMarker {
   planSteps: ParsedPlanStep[];
   stepCompleted: ParsedStepComplete | null;
   stepsCompleted: ParsedStepComplete[];
+  /** @deprecated Not used for business logic. Will be removed in future version. */
   planModeEntered: boolean;
+  /** @deprecated Not used for business logic. Will be removed in future version. */
   planModeExited: boolean;
   planFilePath: string | null;
   implementationComplete: boolean;

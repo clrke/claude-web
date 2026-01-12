@@ -22,6 +22,11 @@ import {
   BatchAnswersInputSchema,
   RequestChangesInputSchema,
 } from './validation/schemas';
+import {
+  isPlanApproved,
+  isImplementationComplete,
+  getStepCounts,
+} from './utils/stateVerification';
 import * as packageJson from '../package.json';
 
 const startTime = Date.now();
@@ -346,7 +351,11 @@ async function spawnStage2Review(
 }
 
 /**
- * Handle Stage 2 completion - auto-transition to Stage 3 when [PLAN_APPROVED]
+ * Handle Stage 2 completion - auto-transition to Stage 3 when plan is approved.
+ *
+ * Uses state-based verification as primary check (all planning questions answered),
+ * with [PLAN_APPROVED] marker as secondary signal. This reduces dependency on
+ * indeterministic Claude markers.
  */
 async function handleStage2Completion(
   session: Session,
@@ -357,13 +366,25 @@ async function handleStage2Completion(
   resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined
 ): Promise<void> {
-  if (!result.parsed.planApproved) return;
-
-  console.log(`Plan approved, auto-transitioning to Stage 3 for ${session.featureId}`);
-
-  // Mark plan as approved
+  // Load plan and questions for state-based verification
   const planPath = `${sessionDir}/plan.json`;
+  const questionsPath = `${sessionDir}/questions.json`;
   const plan = await storage.readJson<Plan>(planPath);
+  const questionsFile = await storage.readJson<{ questions: Question[] }>(questionsPath);
+
+  // Check approval via state (primary) or marker (secondary)
+  const stateApproved = isPlanApproved(plan, questionsFile);
+  const markerApproved = result.parsed.planApproved;
+
+  if (!stateApproved && !markerApproved) return;
+
+  // Log which method triggered approval
+  const approvalMethod = stateApproved
+    ? (markerApproved ? 'state+marker' : 'state (all questions answered)')
+    : 'marker only';
+  console.log(`Plan approved via ${approvalMethod}, auto-transitioning to Stage 3 for ${session.featureId}`);
+
+  // Mark plan as approved (plan already loaded above for state verification)
   if (plan) {
     plan.isApproved = true;
     await storage.writeJson(planPath, plan);

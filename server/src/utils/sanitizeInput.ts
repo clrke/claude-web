@@ -6,6 +6,7 @@
  */
 
 // Markers that should be escaped in user input
+// Note: Even deprecated markers are escaped to prevent prompt injection
 const ESCAPE_MARKERS = [
   // Plan approval markers
   '[PLAN_APPROVED]',
@@ -26,7 +27,8 @@ const ESCAPE_MARKERS = [
   '[CI_STATUS',
   '[CI_FAILED]',
   '[RETURN_TO_STAGE_2]',
-  // Plan mode markers
+  // Plan mode markers (deprecated - parsed but not used for business logic)
+  '[PLAN_MODE_ENTERED]',
   '[PLAN_MODE_EXITED]',
 ];
 

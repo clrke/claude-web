@@ -7,6 +7,7 @@ import { DecisionValidator, ValidationLog } from './DecisionValidator';
 import { OutputParser, ParsedPlanStep } from './OutputParser';
 import { PostProcessingType } from './HaikuPostProcessor';
 import { Session, Plan, Question, QuestionStage, QuestionCategory } from '@claude-code-web/shared';
+import { isImplementationComplete } from '../utils/stateVerification';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
   1: 'discovery',
@@ -225,9 +226,24 @@ export class ClaudeResultHandler {
     const hasBlocker = blockerDecisions.length > 0;
     await this.updateStage3Status(sessionDir, result, hasBlocker ? stepId : undefined);
 
+    // Check implementation completion via state (primary) or marker (secondary)
+    // State check: all plan steps have status 'completed' or 'skipped'
+    const planPath = `${sessionDir}/plan.json`;
+    const plan = await this.storage.readJson<Plan>(planPath);
+    const stateComplete = isImplementationComplete(plan);
+    const markerComplete = result.parsed.implementationComplete;
+
+    // Log which method detected completion
+    if (stateComplete || markerComplete) {
+      const method = stateComplete
+        ? (markerComplete ? 'state+marker' : 'state (all steps completed)')
+        : 'marker only';
+      console.log(`Implementation complete via ${method} for ${session.featureId}`);
+    }
+
     return {
       hasBlocker,
-      implementationComplete: result.parsed.implementationComplete,
+      implementationComplete: stateComplete || markerComplete,
     };
   }
 
