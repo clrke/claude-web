@@ -678,8 +678,8 @@ async function handleStage5Result(
     console.log(`Stage 5 found ${result.parsed.decisions.length} issues requiring user input`);
 
     // Save questions for user to answer
-    const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
-    await resultHandler['saveQuestions'](sessionDir, session, result.parsed.decisions, plan);
+    // Skip validation for Stage 5 - these are actual code review findings, not implementation questions
+    await resultHandler['saveQuestions'](sessionDir, session, result.parsed.decisions, null);
 
     // Broadcast questions
     const questionsPath = `${sessionDir}/questions.json`;
