@@ -20,8 +20,8 @@ describe('Stage Prompt Builders', () => {
     featureDescription: 'Implement JWT-based authentication for the API',
     projectPath: '/Users/test/project',
     acceptanceCriteria: [
-      { text: 'Users can login with email/password', checked: false },
-      { text: 'JWT tokens are issued on successful login', checked: false },
+      { text: 'Users can login with email/password', checked: false, type: 'manual' },
+      { text: 'JWT tokens are issued on successful login', checked: false, type: 'manual' },
     ],
     affectedFiles: ['src/auth/middleware.ts', 'src/routes/login.ts'],
     technicalNotes: 'Use bcrypt for password hashing',
@@ -34,6 +34,8 @@ describe('Stage Prompt Builders', () => {
     claudeSessionId: null,
     claudePlanFilePath: null,
     currentPlanVersion: 0,
+    claudeStage3SessionId: null,
+    prUrl: null,
     sessionExpiresAt: '2026-01-12T00:00:00Z',
     createdAt: '2026-01-11T00:00:00Z',
     updatedAt: '2026-01-11T00:00:00Z',
@@ -103,6 +105,99 @@ describe('Stage Prompt Builders', () => {
       const prompt = buildStage1Prompt(sessionNoNotes);
 
       expect(prompt).not.toContain('Technical Notes');
+    });
+
+    describe('composable plan structure documentation', () => {
+      it('should include PLAN_META marker documentation', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('[PLAN_META]');
+        expect(prompt).toContain('[/PLAN_META]');
+        expect(prompt).toContain('version: 1.0.0');
+        expect(prompt).toContain('isApproved: false');
+      });
+
+      it('should include PLAN_STEP marker with complexity attribute', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]');
+        expect(prompt).toContain('[PLAN_STEP id="step-2" parent="step-1" status="pending" complexity="medium"]');
+        expect(prompt).toContain('[/PLAN_STEP]');
+      });
+
+      it('should include complexity rating explanations', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('`low`: Simple changes');
+        expect(prompt).toContain('`medium`: Multiple files');
+        expect(prompt).toContain('`high`: Complex logic');
+      });
+
+      it('should include PLAN_DEPENDENCIES marker documentation', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('[PLAN_DEPENDENCIES]');
+        expect(prompt).toContain('[/PLAN_DEPENDENCIES]');
+        expect(prompt).toContain('Step Dependencies:');
+        expect(prompt).toContain('External Dependencies:');
+      });
+
+      it('should include PLAN_TEST_COVERAGE marker documentation', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('[PLAN_TEST_COVERAGE]');
+        expect(prompt).toContain('[/PLAN_TEST_COVERAGE]');
+        expect(prompt).toContain('Framework:');
+        expect(prompt).toContain('Required Types:');
+        expect(prompt).toContain('Step Coverage:');
+      });
+
+      it('should include PLAN_ACCEPTANCE_MAPPING marker documentation', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('[PLAN_ACCEPTANCE_MAPPING]');
+        expect(prompt).toContain('[/PLAN_ACCEPTANCE_MAPPING]');
+      });
+
+      it('should include acceptance criteria in mapping example', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        // Should include the actual acceptance criteria from the session
+        expect(prompt).toContain('AC-1: "Users can login with email/password"');
+        expect(prompt).toContain('AC-2: "JWT tokens are issued on successful login"');
+      });
+
+      it('should include validation requirements section', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('Validation Requirements');
+        expect(prompt).toContain('All steps must have complexity ratings');
+        expect(prompt).toContain('Step descriptions must be >= 50 characters');
+        expect(prompt).toContain('All 5 sections must be present');
+        expect(prompt).toContain('All acceptance criteria must be mapped');
+        expect(prompt).toContain('No placeholder text');
+      });
+
+      it('should warn about automatic rejection for incomplete plans', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('automatically rejected');
+        expect(prompt).toContain('asked to complete them');
+      });
+
+      it('should instruct to include ALL plan sections in phase 4', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('Include ALL plan sections');
+        expect(prompt).toContain('meta, steps, dependencies, test coverage, acceptance mapping');
+      });
+
+      it('should describe composable plan structure as required', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('Composable Plan Structure');
+        expect(prompt).toContain('MUST include these sections');
+      });
     });
   });
 
@@ -174,6 +269,126 @@ describe('Stage Prompt Builders', () => {
       expect(prompt).toContain('Architecture');
       expect(prompt).toContain('Security');
       expect(prompt).toContain('Performance');
+    });
+
+    it('should include plan structure category', () => {
+      const prompt = buildStage2Prompt(mockSession, mockPlan, 1);
+
+      expect(prompt).toContain('Plan Structure');
+      expect(prompt).toContain('plan_structure');
+    });
+
+    it('should include composable plan structure documentation', () => {
+      const prompt = buildStage2Prompt(mockSession, mockPlan, 1);
+
+      expect(prompt).toContain('Composable Plan Structure');
+      expect(prompt).toContain('[PLAN_STEP');
+      expect(prompt).toContain('[PLAN_META]');
+      expect(prompt).toContain('[PLAN_DEPENDENCIES]');
+      expect(prompt).toContain('[PLAN_TEST_COVERAGE]');
+      expect(prompt).toContain('[PLAN_ACCEPTANCE_MAPPING]');
+    });
+
+    it('should include complexity attribute in PLAN_STEP marker documentation', () => {
+      const prompt = buildStage2Prompt(mockSession, mockPlan, 1);
+
+      expect(prompt).toContain('complexity="low|medium|high"');
+    });
+
+    it('should show step complexity when present', () => {
+      const planWithComplexity: Plan = {
+        ...mockPlan,
+        steps: [
+          {
+            id: 'step-1',
+            parentId: null,
+            orderIndex: 0,
+            title: 'Create auth middleware',
+            description: 'Set up JWT validation',
+            status: 'pending',
+            metadata: {},
+            complexity: 'high',
+          } as PlanStep,
+        ],
+      };
+
+      const prompt = buildStage2Prompt(mockSession, planWithComplexity, 1);
+
+      expect(prompt).toContain('[high complexity]');
+    });
+
+    describe('with planValidationContext', () => {
+      const sessionWithValidationContext: Session = {
+        ...mockSession,
+        planValidationContext: `## Plan Validation Issues
+
+The plan structure is incomplete. Please address the following issues:
+
+### Incomplete Sections
+- Steps: Missing complexity ratings
+- Dependencies: Not defined
+
+### Steps Missing Complexity Ratings
+- step-1
+- step-2`,
+      };
+
+      it('should include validation context warning when present', () => {
+        const prompt = buildStage2Prompt(sessionWithValidationContext, mockPlan, 1);
+
+        expect(prompt).toContain('Plan Validation Issues');
+        expect(prompt).toContain('MUST ADDRESS FIRST');
+        expect(prompt).toContain('previous plan submission was incomplete');
+      });
+
+      it('should include the actual validation context content', () => {
+        const prompt = buildStage2Prompt(sessionWithValidationContext, mockPlan, 1);
+
+        expect(prompt).toContain('Missing complexity ratings');
+        expect(prompt).toContain('Incomplete Sections');
+        expect(prompt).toContain('step-1');
+        expect(prompt).toContain('step-2');
+      });
+
+      it('should include instructions for fixing validation issues', () => {
+        const prompt = buildStage2Prompt(sessionWithValidationContext, mockPlan, 1);
+
+        expect(prompt).toContain('Instructions for fixing validation issues');
+        expect(prompt).toContain('Review each validation issue');
+        expect(prompt).toContain('Update your plan to address all issues');
+        expect(prompt).toContain('Ensure all required sections are complete');
+        expect(prompt).toContain('Re-output the updated plan markers');
+      });
+
+      it('should not include validation section when planValidationContext is null', () => {
+        const prompt = buildStage2Prompt(mockSession, mockPlan, 1);
+
+        expect(prompt).not.toContain('Plan Validation Issues');
+        expect(prompt).not.toContain('MUST ADDRESS FIRST');
+        expect(prompt).not.toContain('previous plan submission was incomplete');
+      });
+
+      it('should not include validation section when planValidationContext is undefined', () => {
+        const sessionNoContext: Session = {
+          ...mockSession,
+          planValidationContext: undefined,
+        };
+        const prompt = buildStage2Prompt(sessionNoContext, mockPlan, 1);
+
+        expect(prompt).not.toContain('Plan Validation Issues');
+        expect(prompt).not.toContain('MUST ADDRESS FIRST');
+      });
+
+      it('should place validation context before the plan steps', () => {
+        const prompt = buildStage2Prompt(sessionWithValidationContext, mockPlan, 1);
+
+        const validationIndex = prompt.indexOf('Plan Validation Issues');
+        const planIndex = prompt.indexOf('Current Plan (v');
+
+        expect(validationIndex).toBeGreaterThan(-1);
+        expect(planIndex).toBeGreaterThan(-1);
+        expect(validationIndex).toBeLessThan(planIndex);
+      });
     });
   });
 

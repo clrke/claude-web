@@ -3,15 +3,16 @@ import crypto from 'crypto';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
 import { SessionManager } from './services/SessionManager';
-import { ClaudeOrchestrator, hasActionableContent } from './services/ClaudeOrchestrator';
+import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS } from './services/ClaudeOrchestrator';
 import { OutputParser } from './services/OutputParser';
 import { HaikuPostProcessor } from './services/HaikuPostProcessor';
 import { ClaudeResultHandler } from './services/ClaudeResultHandler';
+import { planCompletionChecker, PlanCompletenessResult } from './services/PlanCompletionChecker';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { IncompleteStepsAssessor } from './services/IncompleteStepsAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
-import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildStage4Prompt, buildStage5Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt, buildSingleStepPrompt } from './prompts/stagePrompts';
+import { buildStage1Prompt, buildStage2Prompt, buildStage4Prompt, buildStage5Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt, buildSingleStepPrompt } from './prompts/stagePrompts';
 import { Session, PlanStep } from '@claude-code-web/shared';
 import { ClaudeResult } from './services/ClaudeOrchestrator';
 import { Plan, Question } from '@claude-code-web/shared';
@@ -25,8 +26,6 @@ import {
 } from './validation/schemas';
 import {
   isPlanApproved,
-  isImplementationComplete,
-  getStepCounts,
   getHeadCommitSha,
 } from './utils/stateVerification';
 import * as packageJson from '../package.json';
@@ -158,8 +157,9 @@ async function applyHaikuPostProcessing(
 
 /**
  * Generate a commit message from implementation output using Haiku.
+ * @internal Reserved for future use
  */
-async function generateCommitMessage(
+async function _generateCommitMessage(
   output: string,
   projectPath: string
 ): Promise<string | null> {
@@ -169,8 +169,9 @@ async function generateCommitMessage(
 
 /**
  * Generate a brief summary of Claude output using Haiku.
+ * @internal Reserved for future use
  */
-async function generateOutputSummary(
+async function _generateOutputSummary(
   output: string,
   projectPath: string
 ): Promise<string | null> {
@@ -180,8 +181,9 @@ async function generateOutputSummary(
 
 /**
  * Extract test results from output using Haiku.
+ * @internal Reserved for future use
  */
-async function extractTestResults(
+async function _extractTestResults(
   output: string,
   projectPath: string
 ): Promise<{ testsPassing: boolean; summary: string } | null> {
@@ -301,7 +303,7 @@ async function spawnStage2Review(
       eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
     },
   }).then(async (result) => {
-    const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
+    const { allFiltered, planValidation } = await resultHandler.handleStage2Result(session, result, prompt);
 
     // Apply Haiku fallback if no decisions were parsed but output looks like questions
     const extractedCount = await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
@@ -342,8 +344,8 @@ async function spawnStage2Review(
       result.parsed.planApproved = true;
     }
 
-    // Check for auto Stage 2→3 transition
-    await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
+    // Check for auto Stage 2→3 transition (pass planValidation for structure check)
+    await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster, planValidation);
 
     console.log(`Stage 2 review ${result.isError ? 'failed' : 'completed'} for ${session.featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
   }).catch((error) => {
@@ -353,11 +355,15 @@ async function spawnStage2Review(
 }
 
 /**
- * Handle Stage 2 completion - auto-transition to Stage 3 when plan is approved.
+ * Handle Stage 2 completion - auto-transition to Stage 3 when plan is approved AND valid.
  *
  * Uses state-based verification as primary check (all planning questions answered),
  * with [PLAN_APPROVED] marker as secondary signal. This reduces dependency on
  * indeterministic Claude markers.
+ *
+ * Additionally validates plan structure completeness. If plan is approved but
+ * structure is incomplete (missing sections), re-spawns Stage 2 with validation
+ * context to fix the plan. This prevents transitioning to Stage 3 with incomplete plans.
  */
 async function handleStage2Completion(
   session: Session,
@@ -366,7 +372,8 @@ async function handleStage2Completion(
   storage: FileStorageService,
   sessionManager: SessionManager,
   resultHandler: ClaudeResultHandler,
-  eventBroadcaster: EventBroadcaster | undefined
+  eventBroadcaster: EventBroadcaster | undefined,
+  planValidation?: PlanCompletenessResult
 ): Promise<void> {
   // Re-fetch current session state to avoid stale data
   const currentSession = await sessionManager.getSession(session.projectId, session.featureId);
@@ -391,7 +398,68 @@ async function handleStage2Completion(
   const approvalMethod = stateApproved
     ? (markerApproved ? 'state+marker' : 'state (all questions answered)')
     : 'marker only';
-  console.log(`Plan approved via ${approvalMethod}, auto-transitioning to Stage 3 for ${session.featureId}`);
+  console.log(`Plan approved via ${approvalMethod} for ${session.featureId}`);
+
+  // Check if plan structure is complete before transitioning to Stage 3
+  if (planValidation && !planValidation.complete) {
+    // Get current validation attempts from session
+    const currentAttempts = currentSession?.planValidationAttempts ?? 0;
+    const nextAttempt = currentAttempts + 1;
+
+    // Check if we should continue validation attempts
+    if (orchestrator.shouldContinueValidation(currentAttempts)) {
+      orchestrator.logValidationAttempt(
+        session.featureId,
+        nextAttempt,
+        MAX_PLAN_VALIDATION_ATTEMPTS,
+        planValidation.missingContext
+      );
+
+      // Update session with incremented attempt count
+      await sessionManager.updateSession(
+        session.projectId,
+        session.featureId,
+        { planValidationAttempts: nextAttempt }
+      );
+
+      // Build validation context prompt and re-spawn Stage 2
+      const validationPrompt = buildPlanValidationPrompt(planValidation.missingContext);
+
+      // Re-spawn Stage 2 with validation context (don't transition to Stage 3)
+      console.log(`Re-spawning Stage 2 for ${session.featureId} to fix incomplete plan structure (attempt ${nextAttempt}/${MAX_PLAN_VALIDATION_ATTEMPTS})`);
+
+      // Re-fetch updated session before re-spawning
+      const updatedSession = await sessionManager.getSession(session.projectId, session.featureId);
+      if (updatedSession) {
+        await spawnStage2Review(
+          updatedSession,
+          storage,
+          sessionManager,
+          resultHandler,
+          eventBroadcaster,
+          validationPrompt
+        );
+      }
+      return; // Don't transition to Stage 3
+    } else {
+      // Max attempts reached - log warning and proceed anyway
+      orchestrator.logValidationMaxAttemptsReached(session.featureId, MAX_PLAN_VALIDATION_ATTEMPTS);
+      console.warn(`Proceeding to Stage 3 for ${session.featureId} despite incomplete plan structure`);
+    }
+  } else if (planValidation?.complete) {
+    // Plan structure is complete - log success
+    const attempts = currentSession?.planValidationAttempts ?? 0;
+    orchestrator.logValidationSuccess(session.featureId, attempts + 1);
+
+    // Clear validation attempts on success
+    await sessionManager.updateSession(
+      session.projectId,
+      session.featureId,
+      { planValidationAttempts: 0, planValidationContext: null }
+    );
+  }
+
+  console.log(`Auto-transitioning to Stage 3 for ${session.featureId}`);
 
   // Mark plan as approved (plan already loaded above for state verification)
   if (plan) {
@@ -421,12 +489,32 @@ async function handleStage2Completion(
 }
 
 /**
+ * Build a prompt for Stage 2 re-spawn with plan validation context.
+ * This prompt asks Claude to complete the missing sections of the plan.
+ */
+function buildPlanValidationPrompt(missingContext: string): string {
+  return `The plan structure is incomplete and needs additional sections before we can proceed to implementation.
+
+${missingContext}
+
+Please review and complete the plan file with all missing sections. Ensure all required sections are properly filled out:
+- Meta section with title, description, status, and completedSteps tracking
+- Steps array with all implementation steps (id, title, description, status, orderIndex, parentId, complexity, testStrategy)
+- Dependencies array mapping step relationships
+- TestCoverage section with coverage strategy and target percentage
+- AcceptanceMapping linking acceptance criteria to implementing steps
+
+After completing the plan, output [PLAN_APPROVED] to indicate readiness for implementation.`;
+}
+
+/**
  * Spawn Stage 3 implementation Claude. Used by:
  * - Auto-start after plan approval
  * - Resume after blocker answers
  * - Manual /transition endpoint
+ * @internal Reserved for future Stage 3 implementation
  */
-async function spawnStage3Implementation(
+async function _spawnStage3Implementation(
   session: Session,
   storage: FileStorageService,
   sessionManager: SessionManager,
@@ -706,7 +794,7 @@ async function executeSingleStep(
       }
 
       // Handle Stage 3 result with stepId and pre-step commit SHA for git-based verification
-      const { hasBlocker, implementationComplete } = await resultHandler.handleStage3Result(
+      const { hasBlocker, implementationComplete: _implementationComplete } = await resultHandler.handleStage3Result(
         session, result, prompt, step.id, preStepCommitSha || undefined
       );
 
@@ -1910,7 +1998,7 @@ export function createApp(
         // Build Stage 2 prompt with user's feedback
         const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
         if (plan) {
-          const currentIteration = (plan.reviewCount || 0) + 1;
+          const _currentIteration = (plan.reviewCount || 0) + 1; // Track iteration for future use
           const prompt = buildPlanRevisionPrompt(updatedSession, plan, feedback);
           await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
         }
@@ -1959,17 +2047,117 @@ Please pay special attention to the above areas during your review.`;
     }
   });
 
-  // Get plan
+  // Get plan (optionally include validation status via ?validate=true query param)
   app.get('/api/sessions/:projectId/:featureId/plan', async (req, res) => {
     try {
       const { projectId, featureId } = req.params;
+      const includeValidation = req.query.validate === 'true';
+
       const plan = await storage.readJson(`${projectId}/${featureId}/plan.json`);
       if (!plan) {
         return res.status(404).json({ error: 'Plan not found' });
       }
+
+      // If validation requested, include validation result in response
+      if (includeValidation) {
+        const validationResult = planCompletionChecker.checkPlanCompletenessSync(plan);
+        return res.json({
+          plan,
+          validation: {
+            complete: validationResult.complete,
+            validationResult: validationResult.validationResult,
+            missingContext: validationResult.missingContext || null,
+          },
+        });
+      }
+
       res.json(plan);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to get plan';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Get plan validation status
+  // Returns detailed validation status for each section of the composable plan
+  app.get('/api/sessions/:projectId/:featureId/plan/validation', async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+      const sessionDir = `${projectId}/${featureId}`;
+
+      // Read plan from storage and validate synchronously
+      const plan = await storage.readJson(`${sessionDir}/plan.json`);
+      const result = planCompletionChecker.checkPlanCompletenessSync(plan);
+
+      res.json({
+        complete: result.complete,
+        validationResult: result.validationResult,
+        missingContext: result.missingContext || null,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to validate plan';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Trigger plan re-validation
+  // Reads the current plan and validates it, returning the result
+  // Useful after manual plan edits or to refresh validation status
+  app.post('/api/sessions/:projectId/:featureId/plan/revalidate', async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+      const sessionDir = `${projectId}/${featureId}`;
+
+      // Read the current plan
+      const plan = await storage.readJson(`${sessionDir}/plan.json`);
+      if (!plan) {
+        return res.status(404).json({ error: 'Plan not found' });
+      }
+
+      // Validate the plan synchronously (plan is already loaded)
+      const result = planCompletionChecker.checkPlanCompletenessSync(plan);
+
+      // If plan has validationStatus field (ComposablePlan), update it with latest results
+      if ('validationStatus' in (plan as Record<string, unknown>)) {
+        const updatedPlan = {
+          ...plan,
+          validationStatus: {
+            meta: result.validationResult.meta.valid,
+            steps: result.validationResult.steps.valid,
+            dependencies: result.validationResult.dependencies.valid,
+            testCoverage: result.validationResult.testCoverage.valid,
+            acceptanceMapping: result.validationResult.acceptanceMapping.valid,
+            overall: result.validationResult.overall,
+            errors: {
+              ...(result.validationResult.meta.errors.length > 0 ? { meta: result.validationResult.meta.errors } : {}),
+              ...(result.validationResult.steps.errors.length > 0 ? { steps: result.validationResult.steps.errors } : {}),
+              ...(result.validationResult.dependencies.errors.length > 0 ? { dependencies: result.validationResult.dependencies.errors } : {}),
+              ...(result.validationResult.testCoverage.errors.length > 0 ? { testCoverage: result.validationResult.testCoverage.errors } : {}),
+              ...(result.validationResult.acceptanceMapping.errors.length > 0 ? { acceptanceMapping: result.validationResult.acceptanceMapping.errors } : {}),
+            },
+          },
+        };
+
+        // Save the updated plan with validation status
+        await storage.writeJson(`${sessionDir}/plan.json`, updatedPlan);
+
+        // Also update session's planValidationContext if incomplete
+        const session = await sessionManager.getSession(projectId, featureId);
+        if (session) {
+          await sessionManager.updateSession(projectId, featureId, {
+            planValidationContext: result.complete ? null : result.missingContext,
+          });
+        }
+      }
+
+      res.json({
+        complete: result.complete,
+        validationResult: result.validationResult,
+        missingContext: result.missingContext || null,
+        updated: 'validationStatus' in (plan as Record<string, unknown>),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to revalidate plan';
       res.status(500).json({ error: message });
     }
   });

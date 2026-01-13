@@ -17,7 +17,10 @@ import type {
   Plan,
   PlanStep,
   Question,
+  ComposablePlan,
+  PlanValidationStatus,
 } from '@claude-code-web/shared';
+import { ComplexityBadge } from '../components/PlanEditor/PlanNode';
 
 const STAGE_LABELS: Record<number, string> = {
   1: 'Feature Discovery',
@@ -711,7 +714,10 @@ function PlanReviewSection({ plan, isRunning }: { plan: Plan; isRunning?: boolea
                   {index + 1}
                 </div>
                 <div className="flex-1">
-                  <h3 className="font-medium">{step.title}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-medium">{step.title}</h3>
+                    <ComplexityBadge complexity={step.complexity} />
+                  </div>
                   {step.description && (
                     <p className="text-gray-400 text-sm mt-1">{step.description}</p>
                   )}
@@ -723,11 +729,17 @@ function PlanReviewSection({ plan, isRunning }: { plan: Plan; isRunning?: boolea
 
         {selectedStep && (
           <div className="mt-4 p-4 bg-gray-700/50 rounded-lg">
-            <h3 className="font-medium mb-2">Selected: {selectedStep.title}</h3>
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="font-medium">Selected: {selectedStep.title}</h3>
+              <ComplexityBadge complexity={selectedStep.complexity} />
+            </div>
             <p className="text-gray-400 text-sm">{selectedStep.description || 'No description'}</p>
           </div>
         )}
       </div>
+
+      {/* Plan validation status */}
+      <PlanValidationStatusPanel plan={plan} />
 
       {!plan.isApproved && (
         <div className="flex gap-4">
@@ -1256,6 +1268,113 @@ function FinalApprovalSection({ session, projectId, featureId }: { session: Sess
   );
 }
 
+/**
+ * Check if a plan is in ComposablePlan format (has validationStatus)
+ */
+function isComposablePlan(plan: Plan | ComposablePlan): plan is ComposablePlan {
+  return 'validationStatus' in plan && 'meta' in plan;
+}
+
+/**
+ * Get validation status from a plan (ComposablePlan or legacy Plan)
+ */
+function getPlanValidationStatus(plan: Plan | ComposablePlan): PlanValidationStatus | null {
+  if (isComposablePlan(plan)) {
+    return plan.validationStatus;
+  }
+  return null;
+}
+
+/**
+ * Component to display plan validation status
+ */
+function PlanValidationStatusPanel({ plan }: { plan: Plan | ComposablePlan }) {
+  const validationStatus = getPlanValidationStatus(plan);
+
+  if (!validationStatus) {
+    return null; // Legacy plan, no validation status
+  }
+
+  const sections = [
+    { key: 'meta', label: 'Metadata', valid: validationStatus.meta },
+    { key: 'steps', label: 'Steps', valid: validationStatus.steps },
+    { key: 'dependencies', label: 'Dependencies', valid: validationStatus.dependencies },
+    { key: 'testCoverage', label: 'Test Coverage', valid: validationStatus.testCoverage },
+    { key: 'acceptanceMapping', label: 'Acceptance Mapping', valid: validationStatus.acceptanceMapping },
+  ];
+
+  const invalidSections = sections.filter(s => !s.valid);
+  const allValid = validationStatus.overall;
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-4" data-testid="plan-validation-status">
+      <div className="flex items-center gap-2 mb-3">
+        {allValid ? (
+          <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ) : (
+          <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        )}
+        <h3 className="font-medium">
+          Plan Validation: {allValid ? (
+            <span className="text-green-400">Complete</span>
+          ) : (
+            <span className="text-yellow-400">Incomplete</span>
+          )}
+        </h3>
+      </div>
+
+      {!allValid && invalidSections.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm text-gray-400">Missing sections:</p>
+          <ul className="space-y-1">
+            {invalidSections.map(section => (
+              <li key={section.key} className="flex items-center gap-2 text-sm">
+                <span className="w-2 h-2 rounded-full bg-yellow-400" />
+                <span className="text-yellow-300">{section.label}</span>
+              </li>
+            ))}
+          </ul>
+          {validationStatus.errors && Object.keys(validationStatus.errors).length > 0 && (
+            <div className="mt-3 p-2 bg-gray-700/50 rounded text-xs">
+              <p className="text-gray-400 mb-1">Validation errors:</p>
+              {Object.entries(validationStatus.errors).map(([section, errors]) => (
+                <div key={section} className="mb-1">
+                  <span className="text-gray-500">{section}:</span>
+                  <ul className="ml-2 text-red-400">
+                    {errors.map((err, i) => (
+                      <li key={i}>- {err}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Section status indicators */}
+      <div className="flex flex-wrap gap-2 mt-3">
+        {sections.map(section => (
+          <span
+            key={section.key}
+            className={`text-xs px-2 py-1 rounded ${
+              section.valid
+                ? 'bg-green-900/40 text-green-400'
+                : 'bg-yellow-900/40 text-yellow-400'
+            }`}
+          >
+            {section.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PlanModal({ plan, onClose }: { plan: Plan; onClose: () => void }) {
   const completedCount = plan.steps.filter(s => s.status === 'completed').length;
   const inProgressCount = plan.steps.filter(s => s.status === 'in_progress').length;
@@ -1334,9 +1453,10 @@ function PlanModal({ plan, onClose }: { plan: Plan; onClose: () => void }) {
                     {STATUS_ICONS[step.status] || STATUS_ICONS.pending}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-gray-500 text-sm font-mono">#{index + 1}</span>
                       <h3 className="font-medium">{step.title}</h3>
+                      <ComplexityBadge complexity={step.complexity} />
                       <span className={`text-xs px-2 py-0.5 rounded ${
                         step.status === 'completed' ? 'bg-green-900/50 text-green-400' :
                         step.status === 'in_progress' ? 'bg-blue-900/50 text-blue-400' :

@@ -48,6 +48,10 @@ export interface Session {
   sessionExpiresAt: string;
   createdAt: string;
   updatedAt: string;
+  /** Context for plan validation failures - set when plan structure is incomplete after Stage 2 */
+  planValidationContext?: string | null;
+  /** Number of plan validation attempts in current Stage 2 session */
+  planValidationAttempts?: number;
 }
 
 export interface SessionRuntimeStatus {
