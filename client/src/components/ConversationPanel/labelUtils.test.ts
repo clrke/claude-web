@@ -123,6 +123,23 @@ describe('generateConversationLabel', () => {
       expect(generateConversationLabel(entry, planSteps)).toBe('Implementation of Step 2: Second step');
     });
 
+    it('uses orderIndex for step number, not array position', () => {
+      // Arrange steps in a different array order than their orderIndex
+      const unorderedSteps: PlanStep[] = [
+        { id: 'step-b', title: 'Step B', parentId: null, orderIndex: 5, description: '', status: 'pending', metadata: {} },
+        { id: 'step-a', title: 'Step A', parentId: null, orderIndex: 2, description: '', status: 'pending', metadata: {} },
+        { id: 'step-c', title: 'Step C', parentId: null, orderIndex: 0, description: '', status: 'pending', metadata: {} },
+      ];
+
+      // step-a is at array index 1, but has orderIndex 2, so should show "Step 3"
+      const entry = createEntry({ stage: 3, stepId: 'step-a' });
+      expect(generateConversationLabel(entry, unorderedSteps)).toBe('Implementation of Step 3: Step A');
+
+      // step-c is at array index 2, but has orderIndex 0, so should show "Step 1"
+      const entry2 = createEntry({ stage: 3, stepId: 'step-c' });
+      expect(generateConversationLabel(entry2, unorderedSteps)).toBe('Implementation of Step 1: Step C');
+    });
+
     it('truncates long step titles', () => {
       const entry = createEntry({ stage: 3, stepId: 'step-3' });
       const label = generateConversationLabel(entry, planSteps);

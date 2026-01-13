@@ -103,9 +103,10 @@ export function generateConversationLabel(
   if (entry.stage === 3 && entry.stepId && planSteps) {
     const step = planSteps.find(s => s.id === entry.stepId);
     if (step) {
-      const stepIndex = planSteps.indexOf(step) + 1;
+      // Use step.orderIndex for correct display (1-based, so add 1)
+      const stepNumber = step.orderIndex + 1;
       const truncatedTitle = truncateText(step.title, MAX_STEP_TITLE_LENGTH);
-      return `${stageLabel} of Step ${stepIndex}: ${truncatedTitle}`;
+      return `${stageLabel} of Step ${stepNumber}: ${truncatedTitle}`;
     }
   }
 
