@@ -1,14 +1,10 @@
 import {
   PlanValidator,
   planValidator,
-  SectionValidationResult,
   PlanValidationResult,
-  IncompleteSectionInfo,
 } from '../PlanValidator';
 import {
-  planMetaSchema,
   planStepSchema,
-  planStepCompleteSchema,
   planDependenciesSchema,
   planTestCoverageSchema,
   planAcceptanceMappingSchema,
@@ -622,7 +618,7 @@ describe('PlanValidator - Validation Context Generation', () => {
     // Remove complexity from step
     delete (plan.steps[0] as Record<string, unknown>).complexity;
     // We need to trigger the guidance generation
-    const incompleteSections = validator.getIncompleteSections(plan);
+    const _incompleteSections = validator.getIncompleteSections(plan); // Validates plan as side effect
     // Since validateSteps doesn't require complexity, check via validateStepsComplete
     const stepsResult = validator.validateStepsComplete(plan.steps);
     expect(stepsResult.errors.some(e => e.includes('complexity'))).toBe(true);

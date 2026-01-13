@@ -7,13 +7,12 @@ import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS 
 import { OutputParser } from './services/OutputParser';
 import { HaikuPostProcessor } from './services/HaikuPostProcessor';
 import { ClaudeResultHandler } from './services/ClaudeResultHandler';
-import { PlanCompletenessResult, planCompletionChecker } from './services/PlanCompletionChecker';
-import { PlanValidationResult, planValidator } from './services/PlanValidator';
+import { planCompletionChecker, PlanCompletenessResult } from './services/PlanCompletionChecker';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { IncompleteStepsAssessor } from './services/IncompleteStepsAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
-import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildStage4Prompt, buildStage5Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt, buildSingleStepPrompt } from './prompts/stagePrompts';
+import { buildStage1Prompt, buildStage2Prompt, buildStage4Prompt, buildStage5Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt, buildSingleStepPrompt } from './prompts/stagePrompts';
 import { Session, PlanStep } from '@claude-code-web/shared';
 import { ClaudeResult } from './services/ClaudeOrchestrator';
 import { Plan, Question } from '@claude-code-web/shared';
@@ -27,8 +26,6 @@ import {
 } from './validation/schemas';
 import {
   isPlanApproved,
-  isImplementationComplete,
-  getStepCounts,
   getHeadCommitSha,
 } from './utils/stateVerification';
 import * as packageJson from '../package.json';
@@ -160,8 +157,9 @@ async function applyHaikuPostProcessing(
 
 /**
  * Generate a commit message from implementation output using Haiku.
+ * @internal Reserved for future use
  */
-async function generateCommitMessage(
+async function _generateCommitMessage(
   output: string,
   projectPath: string
 ): Promise<string | null> {
@@ -171,8 +169,9 @@ async function generateCommitMessage(
 
 /**
  * Generate a brief summary of Claude output using Haiku.
+ * @internal Reserved for future use
  */
-async function generateOutputSummary(
+async function _generateOutputSummary(
   output: string,
   projectPath: string
 ): Promise<string | null> {
@@ -182,8 +181,9 @@ async function generateOutputSummary(
 
 /**
  * Extract test results from output using Haiku.
+ * @internal Reserved for future use
  */
-async function extractTestResults(
+async function _extractTestResults(
   output: string,
   projectPath: string
 ): Promise<{ testsPassing: boolean; summary: string } | null> {
@@ -512,8 +512,9 @@ After completing the plan, output [PLAN_APPROVED] to indicate readiness for impl
  * - Auto-start after plan approval
  * - Resume after blocker answers
  * - Manual /transition endpoint
+ * @internal Reserved for future Stage 3 implementation
  */
-async function spawnStage3Implementation(
+async function _spawnStage3Implementation(
   session: Session,
   storage: FileStorageService,
   sessionManager: SessionManager,
@@ -793,7 +794,7 @@ async function executeSingleStep(
       }
 
       // Handle Stage 3 result with stepId and pre-step commit SHA for git-based verification
-      const { hasBlocker, implementationComplete } = await resultHandler.handleStage3Result(
+      const { hasBlocker, implementationComplete: _implementationComplete } = await resultHandler.handleStage3Result(
         session, result, prompt, step.id, preStepCommitSha || undefined
       );
 
@@ -1997,7 +1998,7 @@ export function createApp(
         // Build Stage 2 prompt with user's feedback
         const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
         if (plan) {
-          const currentIteration = (plan.reviewCount || 0) + 1;
+          const _currentIteration = (plan.reviewCount || 0) + 1; // Track iteration for future use
           const prompt = buildPlanRevisionPrompt(updatedSession, plan, feedback);
           await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
         }

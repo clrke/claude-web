@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
 import { OutputParser, ParsedMarker } from './OutputParser';
 
 export type OutputCallback = (chunk: string, isComplete: boolean) => void;

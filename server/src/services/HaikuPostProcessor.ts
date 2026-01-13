@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { OutputParser, ParsedMarker, ParsedPlanStep, ParsedDecision, ParsedImplementationStatus, ParsedPRCreated } from './OutputParser';
+import { OutputParser, ParsedPlanStep, ParsedDecision, ParsedImplementationStatus, ParsedPRCreated } from './OutputParser';
 
 const HAIKU_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
 const MIN_OUTPUT_LENGTH = 50; // Minimum output length to process

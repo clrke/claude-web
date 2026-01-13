@@ -4,8 +4,6 @@ import * as os from 'os';
 import {
   PlanCompletionChecker,
   planCompletionChecker,
-  PlanCompletenessResult,
-  RepromptContext,
 } from '../PlanCompletionChecker';
 import {
   PlanValidator,

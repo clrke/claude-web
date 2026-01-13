@@ -4,7 +4,6 @@ import {
   PlanValidator,
   planValidator,
   PlanValidationResult,
-  IncompleteSectionInfo,
 } from './PlanValidator';
 import type {
   ComposablePlan,
@@ -124,7 +123,7 @@ export class PlanCompletionChecker {
    * Build detailed reprompt context for Stage 2 re-entry.
    * This provides structured information about what's missing in the plan.
    */
-  buildRepromptContext(validationResult: PlanValidationResult, plan?: unknown): RepromptContext {
+  buildRepromptContext(validationResult: PlanValidationResult, _plan?: unknown): RepromptContext {
     const incompleteSections: string[] = [];
     const stepsLackingComplexity: string[] = [];
     const unmappedAcceptanceCriteria: string[] = [];

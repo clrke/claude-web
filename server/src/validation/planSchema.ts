@@ -24,7 +24,7 @@ const PLACEHOLDER_PATTERNS = [
   /\bTO BE DEFINED\b/i,
   /\bNEEDS?\s+(TO BE\s+)?(FILLED|COMPLETED|WRITTEN)\b/i,
   /\[\.{3,}\]/,  // [...] or [....] etc.
-  /\<\.{3,}\>/,  // <...> or <....> etc.
+  /<\.{3,}>/,  // <...> or <....> etc.
 ];
 
 /** Marker patterns that should not appear in step content (security) */

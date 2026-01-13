@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import type {
   ComposablePlan,
-  PlanMeta,
   PlanStep,
   PlanDependencies,
   PlanTestCoverage,
@@ -15,7 +14,6 @@ import {
   planDependenciesSchema,
   planTestCoverageSchema,
   planAcceptanceMappingSchema,
-  composablePlanSchema,
   validateDependenciesAgainstSteps,
   validateTestCoverageAgainstSteps,
   validateAcceptanceMappingAgainstSteps,
@@ -122,7 +120,6 @@ export class PlanValidator {
     }
 
     // Validate parentIds reference valid steps
-    const stepIdArray = Array.from(stepIds);
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       if (step?.parentId && !stepIds.has(step.parentId)) {

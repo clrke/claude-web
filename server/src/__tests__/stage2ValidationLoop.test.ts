@@ -1,9 +1,6 @@
 import { ClaudeOrchestrator, MAX_PLAN_VALIDATION_ATTEMPTS } from '../services/ClaudeOrchestrator';
 import { OutputParser } from '../services/OutputParser';
-import {
-  PlanCompletionChecker,
-  PlanCompletenessResult,
-} from '../services/PlanCompletionChecker';
+import { PlanCompletionChecker } from '../services/PlanCompletionChecker';
 import {
   PlanValidator,
   PlanValidationResult,
@@ -587,7 +584,7 @@ describe('Stage 2 Validation Loop - Max Attempts Prevents Infinite Loop', () => 
 
   it('simulates validation loop with successful fix on second attempt', () => {
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
-    const checker = new PlanCompletionChecker();
+    const _checker = new PlanCompletionChecker(); // Used to verify it can be instantiated
 
     let currentAttempts = 0;
     let planIsComplete = false;
@@ -646,7 +643,7 @@ describe('Stage 2 Validation Loop - Full Flow Integration', () => {
 
     // Initial incomplete plan
     let plan = createIncompletePlan();
-    let session = createMockSession({ planValidationAttempts: 0 });
+    const session = createMockSession({ planValidationAttempts: 0 });
     let result = checker.checkPlanCompletenessSync(plan);
 
     expect(result.complete).toBe(false);
@@ -690,7 +687,7 @@ describe('Stage 2 Validation Loop - Full Flow Integration', () => {
     const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
 
     const plan = createIncompletePlan();
-    let session = createMockSession({ planValidationAttempts: 0 });
+    const session = createMockSession({ planValidationAttempts: 0 });
     let result = checker.checkPlanCompletenessSync(plan);
 
     // Run validation loop until max attempts

@@ -9,7 +9,6 @@ import type {
   PlanAcceptanceCriteriaMapping,
   AcceptanceCriteriaStepMapping,
   ComposablePlan,
-  PlanValidationStatus,
   PlanStep,
 } from '@claude-code-web/shared';
 
