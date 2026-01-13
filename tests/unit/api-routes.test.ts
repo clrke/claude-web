@@ -387,6 +387,100 @@ describe('API Routes', () => {
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ entries: [] });
     });
+
+    it('should include validation metadata (questionIndex, validationAction) in response', async () => {
+      const conversationsPath = `${projectId}/${featureId}/conversations.json`;
+      const mockConversations = {
+        entries: [
+          {
+            stage: 1,
+            timestamp: '2026-01-11T12:00:00Z',
+            prompt: 'Main discovery call',
+            output: 'Discovered files...',
+            sessionId: 'claude-session-123',
+            costUsd: 0.05,
+            isError: false,
+            parsed: { decisions: [], planSteps: [], planFilePath: null, planApproved: false, planModeEntered: false, planModeExited: false },
+          },
+          {
+            stage: 1,
+            timestamp: '2026-01-11T12:01:00Z',
+            prompt: 'Validate question: Which database?',
+            output: 'pass',
+            sessionId: null,
+            costUsd: 0,
+            isError: false,
+            parsed: { decisions: [], planSteps: [], planFilePath: null, planApproved: false, planModeEntered: false, planModeExited: false },
+            postProcessingType: 'decision_validation',
+            validationAction: 'pass',
+            questionIndex: 1,
+          },
+          {
+            stage: 1,
+            timestamp: '2026-01-11T12:02:00Z',
+            prompt: 'Validate question: Which auth method?',
+            output: 'filter',
+            sessionId: null,
+            costUsd: 0,
+            isError: false,
+            parsed: { decisions: [], planSteps: [], planFilePath: null, planApproved: false, planModeEntered: false, planModeExited: false },
+            postProcessingType: 'decision_validation',
+            validationAction: 'filter',
+            questionIndex: 2,
+          },
+        ],
+      };
+      await storage.writeJson(conversationsPath, mockConversations);
+
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/conversations`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.entries).toHaveLength(3);
+
+      // First entry - no validation metadata
+      expect(response.body.entries[0].postProcessingType).toBeUndefined();
+      expect(response.body.entries[0].validationAction).toBeUndefined();
+      expect(response.body.entries[0].questionIndex).toBeUndefined();
+
+      // Second entry - validation with pass action
+      expect(response.body.entries[1].postProcessingType).toBe('decision_validation');
+      expect(response.body.entries[1].validationAction).toBe('pass');
+      expect(response.body.entries[1].questionIndex).toBe(1);
+
+      // Third entry - validation with filter action
+      expect(response.body.entries[2].postProcessingType).toBe('decision_validation');
+      expect(response.body.entries[2].validationAction).toBe('filter');
+      expect(response.body.entries[2].questionIndex).toBe(2);
+    });
+
+    it('should include stepId for Stage 3 implementation entries', async () => {
+      const conversationsPath = `${projectId}/${featureId}/conversations.json`;
+      const mockConversations = {
+        entries: [
+          {
+            stage: 3,
+            stepId: 'step-abc-123',
+            timestamp: '2026-01-11T12:00:00Z',
+            prompt: 'Implement step 1',
+            output: 'Implemented feature...',
+            sessionId: 'claude-session-456',
+            costUsd: 0.10,
+            isError: false,
+            parsed: { decisions: [], planSteps: [], planFilePath: null, planApproved: false, planModeEntered: false, planModeExited: false },
+          },
+        ],
+      };
+      await storage.writeJson(conversationsPath, mockConversations);
+
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/conversations`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.entries).toHaveLength(1);
+      expect(response.body.entries[0].stage).toBe(3);
+      expect(response.body.entries[0].stepId).toBe('step-abc-123');
+    });
   });
 
   describe('POST /api/sessions/:projectId/:featureId/re-review', () => {

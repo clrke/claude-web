@@ -7,7 +7,7 @@ import { ClaudeResult } from './ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog } from './DecisionValidator';
 import { OutputParser, ParsedPlanStep } from './OutputParser';
 import { PostProcessingType } from './HaikuPostProcessor';
-import { Session, Plan, Question, QuestionStage, QuestionCategory } from '@claude-code-web/shared';
+import { Session, Plan, Question, QuestionStage, QuestionCategory, ValidationAction } from '@claude-code-web/shared';
 import { isImplementationComplete, hasNewCommitSince } from '../utils/stateVerification';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
@@ -36,6 +36,12 @@ interface ConversationEntry {
   status?: 'started' | 'completed' | 'interrupted';
   /** Post-processing type (if this is a Haiku post-processing call) */
   postProcessingType?: PostProcessingType;
+  /** ID of the question this validation is for (for decision_validation entries) */
+  questionId?: string;
+  /** Validation result action (pass/filter/repurpose) */
+  validationAction?: ValidationAction;
+  /** 1-based index of the question for display purposes */
+  questionIndex?: number;
 }
 
 interface ConversationsFile {
@@ -395,7 +401,12 @@ export class ClaudeResultHandler {
     output: string,
     durationMs: number,
     isError: boolean = false,
-    error?: string
+    error?: string,
+    validationMeta?: {
+      questionId?: string;
+      validationAction?: ValidationAction;
+      questionIndex?: number;
+    }
   ): Promise<void> {
     // Extract just the result field from Haiku JSON output
     let cleanOutput = output;
@@ -441,6 +452,10 @@ export class ClaudeResultHandler {
       },
       status: 'completed',
       postProcessingType,
+      // Validation metadata (only for decision_validation entries)
+      ...(validationMeta?.questionId && { questionId: validationMeta.questionId }),
+      ...(validationMeta?.validationAction && { validationAction: validationMeta.validationAction }),
+      ...(validationMeta?.questionIndex !== undefined && { questionIndex: validationMeta.questionIndex }),
     });
     await this.storage.writeJson(conversationPath, conversations);
   }
@@ -566,8 +581,9 @@ export class ClaudeResultHandler {
       // Save validation log for debugging/auditing
       await this.saveValidationLog(sessionDir, log);
 
-      // Save each validation as a post-processing conversation
-      for (const result of log.results) {
+      // Save each validation as a post-processing conversation with metadata
+      for (let i = 0; i < log.results.length; i++) {
+        const result = log.results[i];
         await this.savePostProcessingConversation(
           sessionDir,
           session.currentStage,
@@ -575,7 +591,12 @@ export class ClaudeResultHandler {
           result.prompt,
           result.output,
           result.durationMs,
-          false
+          false,
+          undefined, // no error
+          {
+            validationAction: result.action,
+            questionIndex: i + 1, // 1-based index
+          }
         );
       }
 

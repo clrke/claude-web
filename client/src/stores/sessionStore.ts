@@ -1,8 +1,12 @@
 import { create } from 'zustand';
-import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent } from '@claude-code-web/shared';
+import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent, ValidationAction } from '@claude-code-web/shared';
+
+export type { ValidationAction } from '@claude-code-web/shared';
 
 export interface ConversationEntry {
   stage: number;
+  /** Plan step this conversation is for (Stage 3) */
+  stepId?: string;
   timestamp: string;
   prompt: string;
   output: string;
@@ -10,7 +14,7 @@ export interface ConversationEntry {
   costUsd: number;
   isError: boolean;
   error?: string;
-  status?: 'started' | 'completed';
+  status?: 'started' | 'completed' | 'interrupted';
   /** Post-processing type (if this is a Haiku post-processing call) */
   postProcessingType?:
     | 'decision_validation'
@@ -24,6 +28,12 @@ export interface ConversationEntry {
     | 'review_findings_extraction'
     | 'commit_message_generation'
     | 'summary_generation';
+  /** ID of the question this validation is for (for decision_validation entries) */
+  questionId?: string;
+  /** Validation result action (pass/filter/repurpose) */
+  validationAction?: ValidationAction;
+  /** 1-based index of the question for display purposes */
+  questionIndex?: number;
 }
 
 export interface ExecutionStatus {
@@ -288,3 +298,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 }));
+
+/**
+ * Selector hook to get a specific plan step by ID.
+ * Returns undefined if step or plan not found.
+ */
+export const usePlanStep = (stepId: string | undefined) => {
+  return useSessionStore((state) => {
+    if (!stepId || !state.plan) return undefined;
+    return state.plan.steps.find((step) => step.id === stepId);
+  });
+};
+
+/**
+ * Selector hook to get a specific question by ID.
+ * Returns undefined if question not found.
+ */
+export const useQuestion = (questionId: string | undefined) => {
+  return useSessionStore((state) => {
+    if (!questionId) return undefined;
+    return state.questions.find((q) => q.id === questionId);
+  });
+};
