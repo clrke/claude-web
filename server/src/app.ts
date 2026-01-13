@@ -7,7 +7,8 @@ import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS 
 import { OutputParser } from './services/OutputParser';
 import { HaikuPostProcessor } from './services/HaikuPostProcessor';
 import { ClaudeResultHandler } from './services/ClaudeResultHandler';
-import { PlanCompletenessResult } from './services/PlanCompletionChecker';
+import { PlanCompletenessResult, planCompletionChecker } from './services/PlanCompletionChecker';
+import { PlanValidationResult, planValidator } from './services/PlanValidator';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { IncompleteStepsAssessor } from './services/IncompleteStepsAssessor';
@@ -2045,17 +2046,117 @@ Please pay special attention to the above areas during your review.`;
     }
   });
 
-  // Get plan
+  // Get plan (optionally include validation status via ?validate=true query param)
   app.get('/api/sessions/:projectId/:featureId/plan', async (req, res) => {
     try {
       const { projectId, featureId } = req.params;
+      const includeValidation = req.query.validate === 'true';
+
       const plan = await storage.readJson(`${projectId}/${featureId}/plan.json`);
       if (!plan) {
         return res.status(404).json({ error: 'Plan not found' });
       }
+
+      // If validation requested, include validation result in response
+      if (includeValidation) {
+        const validationResult = planCompletionChecker.checkPlanCompletenessSync(plan);
+        return res.json({
+          plan,
+          validation: {
+            complete: validationResult.complete,
+            validationResult: validationResult.validationResult,
+            missingContext: validationResult.missingContext || null,
+          },
+        });
+      }
+
       res.json(plan);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to get plan';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Get plan validation status
+  // Returns detailed validation status for each section of the composable plan
+  app.get('/api/sessions/:projectId/:featureId/plan/validation', async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+      const sessionDir = `${projectId}/${featureId}`;
+
+      // Read plan from storage and validate synchronously
+      const plan = await storage.readJson(`${sessionDir}/plan.json`);
+      const result = planCompletionChecker.checkPlanCompletenessSync(plan);
+
+      res.json({
+        complete: result.complete,
+        validationResult: result.validationResult,
+        missingContext: result.missingContext || null,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to validate plan';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Trigger plan re-validation
+  // Reads the current plan and validates it, returning the result
+  // Useful after manual plan edits or to refresh validation status
+  app.post('/api/sessions/:projectId/:featureId/plan/revalidate', async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+      const sessionDir = `${projectId}/${featureId}`;
+
+      // Read the current plan
+      const plan = await storage.readJson(`${sessionDir}/plan.json`);
+      if (!plan) {
+        return res.status(404).json({ error: 'Plan not found' });
+      }
+
+      // Validate the plan synchronously (plan is already loaded)
+      const result = planCompletionChecker.checkPlanCompletenessSync(plan);
+
+      // If plan has validationStatus field (ComposablePlan), update it with latest results
+      if ('validationStatus' in (plan as Record<string, unknown>)) {
+        const updatedPlan = {
+          ...plan,
+          validationStatus: {
+            meta: result.validationResult.meta.valid,
+            steps: result.validationResult.steps.valid,
+            dependencies: result.validationResult.dependencies.valid,
+            testCoverage: result.validationResult.testCoverage.valid,
+            acceptanceMapping: result.validationResult.acceptanceMapping.valid,
+            overall: result.validationResult.overall,
+            errors: {
+              ...(result.validationResult.meta.errors.length > 0 ? { meta: result.validationResult.meta.errors } : {}),
+              ...(result.validationResult.steps.errors.length > 0 ? { steps: result.validationResult.steps.errors } : {}),
+              ...(result.validationResult.dependencies.errors.length > 0 ? { dependencies: result.validationResult.dependencies.errors } : {}),
+              ...(result.validationResult.testCoverage.errors.length > 0 ? { testCoverage: result.validationResult.testCoverage.errors } : {}),
+              ...(result.validationResult.acceptanceMapping.errors.length > 0 ? { acceptanceMapping: result.validationResult.acceptanceMapping.errors } : {}),
+            },
+          },
+        };
+
+        // Save the updated plan with validation status
+        await storage.writeJson(`${sessionDir}/plan.json`, updatedPlan);
+
+        // Also update session's planValidationContext if incomplete
+        const session = await sessionManager.getSession(projectId, featureId);
+        if (session) {
+          await sessionManager.updateSession(projectId, featureId, {
+            planValidationContext: result.complete ? null : result.missingContext,
+          });
+        }
+      }
+
+      res.json({
+        complete: result.complete,
+        validationResult: result.validationResult,
+        missingContext: result.missingContext || null,
+        updated: 'validationStatus' in (plan as Record<string, unknown>),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to revalidate plan';
       res.status(500).json({ error: message });
     }
   });

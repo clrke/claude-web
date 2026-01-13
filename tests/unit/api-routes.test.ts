@@ -598,4 +598,348 @@ describe('API Routes', () => {
       expect(response.body.error).toMatch(/pr info not found/i);
     });
   });
+
+  describe('GET /api/sessions/:projectId/:featureId/plan/validation', () => {
+    let projectId: string;
+    let featureId: string;
+
+    beforeEach(async () => {
+      const session = await sessionManager.createSession({
+        title: 'Test Feature',
+        featureDescription: 'Test description',
+        projectPath: '/test/project',
+      });
+      projectId = session.projectId;
+      featureId = session.featureId;
+    });
+
+    it('should return validation result for composable plan', async () => {
+      // Create a composable plan with all required sections
+      // Note: description must be at least 50 characters for validation to pass
+      await storage.writeJson(`${projectId}/${featureId}/plan.json`, {
+        meta: {
+          version: '1.0',
+          sessionId: 'test-session',
+          createdAt: '2026-01-11T12:00:00Z',
+          updatedAt: '2026-01-11T12:00:00Z',
+          isApproved: false,
+          reviewCount: 0,
+        },
+        steps: [
+          {
+            id: 'step-1',
+            parentId: null,
+            orderIndex: 0,
+            title: 'First Step',
+            description: 'This is a detailed implementation plan for the first step that contains enough characters to pass validation.',
+            status: 'pending',
+            metadata: {},
+            complexity: 'medium',
+            acceptanceCriteriaIds: ['ac-1'],
+            estimatedFiles: ['file1.ts'],
+          },
+        ],
+        dependencies: {
+          stepDependencies: [],
+          externalDependencies: [],
+        },
+        testCoverage: {
+          framework: 'jest',
+          requiredTestTypes: ['unit'],
+          stepCoverage: [],
+          globalCoverageTarget: 80,
+        },
+        acceptanceMapping: {
+          mappings: [],
+          updatedAt: '2026-01-11T12:00:00Z',
+        },
+        validationStatus: {
+          meta: true,
+          steps: true,
+          dependencies: true,
+          testCoverage: true,
+          acceptanceMapping: true,
+          overall: true,
+        },
+      });
+
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/plan/validation`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.complete).toBe(true);
+      expect(response.body.validationResult).toBeDefined();
+      expect(response.body.validationResult.overall).toBe(true);
+    });
+
+    it('should return validation errors for incomplete plan', async () => {
+      // Create a legacy plan without all composable sections
+      await storage.writeJson(`${projectId}/${featureId}/plan.json`, {
+        version: '1.0',
+        planVersion: 1,
+        sessionId: 'test-session',
+        isApproved: false,
+        reviewCount: 0,
+        createdAt: '2026-01-11T12:00:00Z',
+        steps: [],  // Empty steps should fail validation
+      });
+
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/plan/validation`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.complete).toBe(false);
+      expect(response.body.validationResult).toBeDefined();
+      expect(response.body.missingContext).toBeTruthy();
+    });
+
+    it('should return incomplete when plan does not exist', async () => {
+      // Delete the plan that was created by session creation
+      await storage.delete(`${projectId}/${featureId}/plan.json`);
+
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/plan/validation`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.complete).toBe(false);
+      // When plan is null, checkPlanCompletenessSync returns "No plan provided"
+      expect(response.body.missingContext).toMatch(/no plan provided/i);
+    });
+  });
+
+  describe('POST /api/sessions/:projectId/:featureId/plan/revalidate', () => {
+    let projectId: string;
+    let featureId: string;
+
+    beforeEach(async () => {
+      const session = await sessionManager.createSession({
+        title: 'Test Feature',
+        featureDescription: 'Test description',
+        projectPath: '/test/project',
+      });
+      projectId = session.projectId;
+      featureId = session.featureId;
+    });
+
+    it('should revalidate composable plan and update validationStatus', async () => {
+      // Create a composable plan with proper description (min 50 chars)
+      await storage.writeJson(`${projectId}/${featureId}/plan.json`, {
+        meta: {
+          version: '1.0',
+          sessionId: 'test-session',
+          createdAt: '2026-01-11T12:00:00Z',
+          updatedAt: '2026-01-11T12:00:00Z',
+          isApproved: false,
+          reviewCount: 0,
+        },
+        steps: [
+          {
+            id: 'step-1',
+            parentId: null,
+            orderIndex: 0,
+            title: 'First Step',
+            description: 'This is a detailed implementation description that contains enough characters to pass the minimum length validation requirement.',
+            status: 'pending',
+            metadata: {},
+            complexity: 'low',
+            acceptanceCriteriaIds: [],
+            estimatedFiles: [],
+          },
+        ],
+        dependencies: {
+          stepDependencies: [],
+          externalDependencies: [],
+        },
+        testCoverage: {
+          framework: 'jest',
+          requiredTestTypes: ['unit'],
+          stepCoverage: [],
+          globalCoverageTarget: 80,
+        },
+        acceptanceMapping: {
+          mappings: [],
+          updatedAt: '2026-01-11T12:00:00Z',
+        },
+        validationStatus: {
+          meta: false, // Intentionally wrong - should be updated
+          steps: false,
+          dependencies: false,
+          testCoverage: false,
+          acceptanceMapping: false,
+          overall: false,
+        },
+      });
+
+      const response = await request(app)
+        .post(`/api/sessions/${projectId}/${featureId}/plan/revalidate`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.complete).toBe(true);
+      expect(response.body.validationResult.overall).toBe(true);
+      expect(response.body.updated).toBe(true);
+
+      // Verify the plan file was updated
+      const updatedPlan = await storage.readJson<Record<string, unknown>>(`${projectId}/${featureId}/plan.json`);
+      const validationStatus = updatedPlan?.validationStatus as Record<string, boolean>;
+      expect(validationStatus.overall).toBe(true);
+    });
+
+    it('should return 404 when plan does not exist', async () => {
+      // Make sure there's no plan file
+      try {
+        await storage.delete(`${projectId}/${featureId}/plan.json`);
+      } catch {
+        // ignore if doesn't exist
+      }
+
+      const response = await request(app)
+        .post(`/api/sessions/${projectId}/${featureId}/plan/revalidate`)
+        .send({});
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toMatch(/plan not found/i);
+    });
+
+    it('should update session planValidationContext on validation failure', async () => {
+      // Create a plan with incomplete steps
+      await storage.writeJson(`${projectId}/${featureId}/plan.json`, {
+        meta: {
+          version: '1.0',
+          sessionId: 'test-session',
+          createdAt: '2026-01-11T12:00:00Z',
+          updatedAt: '2026-01-11T12:00:00Z',
+          isApproved: false,
+          reviewCount: 0,
+        },
+        steps: [], // Empty steps - validation should fail
+        dependencies: {
+          stepDependencies: [],
+          externalDependencies: [],
+        },
+        testCoverage: {
+          framework: 'jest',
+          requiredTestTypes: ['unit'],
+          stepCoverage: [],
+          globalCoverageTarget: 80,
+        },
+        acceptanceMapping: {
+          mappings: [],
+          updatedAt: '2026-01-11T12:00:00Z',
+        },
+        validationStatus: {
+          meta: true,
+          steps: true, // Intentionally wrong
+          dependencies: true,
+          testCoverage: true,
+          acceptanceMapping: true,
+          overall: true,
+        },
+      });
+
+      const response = await request(app)
+        .post(`/api/sessions/${projectId}/${featureId}/plan/revalidate`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.complete).toBe(false);
+      expect(response.body.updated).toBe(true);
+
+      // Verify session planValidationContext was updated
+      const session = await sessionManager.getSession(projectId, featureId);
+      expect(session?.planValidationContext).toBeTruthy();
+    });
+  });
+
+  describe('GET /api/sessions/:projectId/:featureId/plan with validation', () => {
+    let projectId: string;
+    let featureId: string;
+
+    beforeEach(async () => {
+      const session = await sessionManager.createSession({
+        title: 'Test Feature',
+        featureDescription: 'Test description',
+        projectPath: '/test/project',
+      });
+      projectId = session.projectId;
+      featureId = session.featureId;
+
+      // Create a plan
+      await storage.writeJson(`${projectId}/${featureId}/plan.json`, {
+        meta: {
+          version: '1.0',
+          sessionId: 'test-session',
+          createdAt: '2026-01-11T12:00:00Z',
+          updatedAt: '2026-01-11T12:00:00Z',
+          isApproved: false,
+          reviewCount: 0,
+        },
+        steps: [
+          {
+            id: 'step-1',
+            parentId: null,
+            orderIndex: 0,
+            title: 'First Step',
+            description: 'Implementation details',
+            status: 'pending',
+            metadata: {},
+            complexity: 'medium',
+          },
+        ],
+        dependencies: {
+          stepDependencies: [],
+          externalDependencies: [],
+        },
+        testCoverage: {
+          framework: 'jest',
+          requiredTestTypes: ['unit'],
+          stepCoverage: [],
+        },
+        acceptanceMapping: {
+          mappings: [],
+          updatedAt: '2026-01-11T12:00:00Z',
+        },
+        validationStatus: {
+          meta: true,
+          steps: true,
+          dependencies: true,
+          testCoverage: true,
+          acceptanceMapping: true,
+          overall: true,
+        },
+      });
+    });
+
+    it('should return plan without validation by default', async () => {
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/plan`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.meta).toBeDefined();
+      expect(response.body.steps).toBeDefined();
+      expect(response.body.validation).toBeUndefined();
+    });
+
+    it('should return plan with validation when validate=true', async () => {
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/plan?validate=true`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.plan).toBeDefined();
+      expect(response.body.validation).toBeDefined();
+      // Validation returns result - it may not be complete depending on test setup
+      expect(response.body.validation.validationResult).toBeDefined();
+    });
+
+    it('should return 404 when plan does not exist', async () => {
+      // Remove the plan
+      await storage.delete(`${projectId}/${featureId}/plan.json`);
+
+      const response = await request(app)
+        .get(`/api/sessions/${projectId}/${featureId}/plan`);
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toMatch(/plan not found/i);
+    });
+  });
 });
