@@ -151,18 +151,32 @@ function createIncompletePlan(overrides = {}): ComposablePlan {
   };
 }
 
-function createMockSession(overrides = {}): Session {
+function createMockSession(overrides: Partial<Session> = {}): Session {
   return {
+    version: '1.0.0',
     id: 'session-123',
     projectId: 'project-1',
     featureId: 'feature-a',
     title: 'Test Feature',
     featureDescription: 'A test feature for validation loop testing',
     projectPath: '/test/project',
+    acceptanceCriteria: [{ text: 'Feature works correctly', checked: false, type: 'manual' }],
+    affectedFiles: [],
+    technicalNotes: '',
+    baseBranch: 'main',
+    featureBranch: 'feature/test-feature',
+    baseCommitSha: 'abc123',
+    status: 'planning',
     currentStage: 2,
+    replanningCount: 0,
+    claudeSessionId: null,
+    claudePlanFilePath: null,
+    currentPlanVersion: 1,
+    claudeStage3SessionId: null,
+    prUrl: null,
+    sessionExpiresAt: '2024-01-16T10:00:00Z',
     createdAt: '2024-01-15T10:00:00Z',
     updatedAt: '2024-01-15T10:00:00Z',
-    acceptanceCriteria: [{ text: 'Feature works correctly' }],
     planValidationAttempts: 0,
     planValidationContext: null,
     ...overrides,

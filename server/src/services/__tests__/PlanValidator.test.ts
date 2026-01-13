@@ -668,7 +668,7 @@ describe('PlanValidator - Validation Context Generation', () => {
       steps: [createValidStep({ parentId: 'non-existent-step' })],
     });
     const context = validator.generateValidationContext(plan);
-    expect(context).toContain('orphaned') || expect(context).toContain('parent');
+    expect(context.includes('orphaned') || context.includes('parent')).toBe(true);
   });
 });
 
