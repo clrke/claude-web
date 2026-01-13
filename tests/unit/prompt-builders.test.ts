@@ -106,6 +106,99 @@ describe('Stage Prompt Builders', () => {
 
       expect(prompt).not.toContain('Technical Notes');
     });
+
+    describe('composable plan structure documentation', () => {
+      it('should include PLAN_META marker documentation', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('[PLAN_META]');
+        expect(prompt).toContain('[/PLAN_META]');
+        expect(prompt).toContain('version: 1.0.0');
+        expect(prompt).toContain('isApproved: false');
+      });
+
+      it('should include PLAN_STEP marker with complexity attribute', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]');
+        expect(prompt).toContain('[PLAN_STEP id="step-2" parent="step-1" status="pending" complexity="medium"]');
+        expect(prompt).toContain('[/PLAN_STEP]');
+      });
+
+      it('should include complexity rating explanations', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('`low`: Simple changes');
+        expect(prompt).toContain('`medium`: Multiple files');
+        expect(prompt).toContain('`high`: Complex logic');
+      });
+
+      it('should include PLAN_DEPENDENCIES marker documentation', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('[PLAN_DEPENDENCIES]');
+        expect(prompt).toContain('[/PLAN_DEPENDENCIES]');
+        expect(prompt).toContain('Step Dependencies:');
+        expect(prompt).toContain('External Dependencies:');
+      });
+
+      it('should include PLAN_TEST_COVERAGE marker documentation', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('[PLAN_TEST_COVERAGE]');
+        expect(prompt).toContain('[/PLAN_TEST_COVERAGE]');
+        expect(prompt).toContain('Framework:');
+        expect(prompt).toContain('Required Types:');
+        expect(prompt).toContain('Step Coverage:');
+      });
+
+      it('should include PLAN_ACCEPTANCE_MAPPING marker documentation', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('[PLAN_ACCEPTANCE_MAPPING]');
+        expect(prompt).toContain('[/PLAN_ACCEPTANCE_MAPPING]');
+      });
+
+      it('should include acceptance criteria in mapping example', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        // Should include the actual acceptance criteria from the session
+        expect(prompt).toContain('AC-1: "Users can login with email/password"');
+        expect(prompt).toContain('AC-2: "JWT tokens are issued on successful login"');
+      });
+
+      it('should include validation requirements section', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('Validation Requirements');
+        expect(prompt).toContain('All steps must have complexity ratings');
+        expect(prompt).toContain('Step descriptions must be >= 50 characters');
+        expect(prompt).toContain('All 5 sections must be present');
+        expect(prompt).toContain('All acceptance criteria must be mapped');
+        expect(prompt).toContain('No placeholder text');
+      });
+
+      it('should warn about automatic rejection for incomplete plans', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('automatically rejected');
+        expect(prompt).toContain('asked to complete them');
+      });
+
+      it('should instruct to include ALL plan sections in phase 4', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('Include ALL plan sections');
+        expect(prompt).toContain('meta, steps, dependencies, test coverage, acceptance mapping');
+      });
+
+      it('should describe composable plan structure as required', () => {
+        const prompt = buildStage1Prompt(mockSession);
+
+        expect(prompt).toContain('Composable Plan Structure');
+        expect(prompt).toContain('MUST include these sections');
+      });
+    });
   });
 
   const mockPlan: Plan = {

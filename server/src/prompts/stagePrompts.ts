@@ -99,24 +99,86 @@ IMPORTANT: Do NOT ask questions that can be answered by exploring the codebase:
 - ✅ "The codebase has no rate limiting - which approach should we use?"
 
 ### Phase 3: Generate Plan
-After questions are answered, generate implementation plan.
+After questions are answered, generate a **complete, composable implementation plan** with all required sections.
 
+## Composable Plan Structure
+Your plan MUST include these sections with structured markers. Plans missing any section will be automatically rejected and you'll be asked to complete them.
+
+### 1. Plan Meta (Required)
+\`\`\`
+[PLAN_META]
+version: 1.0.0
+isApproved: false
+[/PLAN_META]
+\`\`\`
+
+### 2. Plan Steps (Required)
 **IMPORTANT: The first step MUST be creating and checking out the feature branch:**
-[PLAN_STEP id="step-1" parent="null" status="pending"]
+\`\`\`
+[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]
 Create feature branch
 Create and checkout feature branch: git checkout -b ${session.featureBranch} from ${session.baseBranch}
 [/PLAN_STEP]
+\`\`\`
 
-Then add implementation steps:
-[PLAN_STEP id="step-2" parent="step-1" status="pending"]
+Then add implementation steps with complexity ratings:
+\`\`\`
+[PLAN_STEP id="step-2" parent="step-1" status="pending" complexity="medium"]
 Step title here
-Description referencing specific files/modules found during exploration.
+Description referencing specific files/modules found during exploration. Must be at least 50 characters with concrete implementation details.
 [/PLAN_STEP]
+\`\`\`
+
+**Complexity ratings:**
+- \`low\`: Simple changes, single file, < 1 hour
+- \`medium\`: Multiple files, moderate logic, 1-4 hours
+- \`high\`: Complex logic, many files, > 4 hours
+
+### 3. Dependencies (Required)
+\`\`\`
+[PLAN_DEPENDENCIES]
+Step Dependencies:
+- step-2 -> step-1: Step 2 requires step 1 to be completed first
+- step-3 -> step-2: Step 3 depends on step 2
+
+External Dependencies:
+- npm:package-name@version: Brief reason why needed
+[/PLAN_DEPENDENCIES]
+\`\`\`
+
+### 4. Test Coverage (Required)
+\`\`\`
+[PLAN_TEST_COVERAGE]
+Framework: vitest|jest|other
+Required Types: unit, integration
+
+Step Coverage:
+- step-1: none (git operation only)
+- step-2: unit (required)
+- step-3: unit, integration (required)
+[/PLAN_TEST_COVERAGE]
+\`\`\`
+
+### 5. Acceptance Criteria Mapping (Required)
+Map each acceptance criterion to the steps that implement it:
+\`\`\`
+[PLAN_ACCEPTANCE_MAPPING]
+${session.acceptanceCriteria.map((c, i) => `- AC-${i + 1}: "${c.text}" -> step-X, step-Y`).join('\n')}
+[/PLAN_ACCEPTANCE_MAPPING]
+\`\`\`
+
+## Validation Requirements
+Your plan will be automatically validated. To pass validation:
+1. **All steps must have complexity ratings** (low/medium/high)
+2. **Step descriptions must be >= 50 characters** with concrete details
+3. **All 5 sections must be present** (meta, steps, dependencies, test coverage, acceptance mapping)
+4. **All acceptance criteria must be mapped** to at least one step
+5. **No placeholder text** like "TBD", "TODO", or "..." in descriptions
 
 ### Phase 4: Complete
 1. Use the Edit tool to write the complete plan to: ${session.claudePlanFilePath}
    - This file already exists and you have permission to edit it
-   - Include all plan steps, technical details, and implementation notes
+   - Include ALL plan sections: meta, steps, dependencies, test coverage, acceptance mapping
 2. Output: [PLAN_FILE path="${session.claudePlanFilePath}"]
 3. Exit plan mode and output: [PLAN_MODE_EXITED]`;
 }
