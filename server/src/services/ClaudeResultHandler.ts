@@ -159,6 +159,7 @@ export class ClaudeResultHandler {
 
   /**
    * Handle Stage 2 (Plan Review) result from Claude.
+   * Also handles plan modifications when returning from Stage 3 blockers.
    * After saving plan updates, validates plan completeness and sets validation context if incomplete.
    */
   async handleStage2Result(
@@ -181,6 +182,18 @@ export class ClaudeResultHandler {
       error: result.error,
       parsed: result.parsed,
     });
+
+    // Parse and add any new plan steps (supports plan modifications during re-review)
+    let planSteps = result.parsed.planSteps;
+    if (planSteps.length === 0 && result.parsed.planFilePath) {
+      console.log(`[Stage 2] No PLAN_STEP markers in output, reading from plan file: ${result.parsed.planFilePath}`);
+      planSteps = await this.parsePlanStepsFromFile(result.parsed.planFilePath);
+      console.log(`[Stage 2] Found ${planSteps.length} plan steps in file`);
+    }
+    if (planSteps.length > 0) {
+      console.log(`[Stage 2] Adding/updating ${planSteps.length} plan steps for ${session.featureId}`);
+      await this.mergePlanSteps(sessionDir, planSteps);
+    }
 
     // Save any new questions (review findings) with validation
     let allFiltered = false;
@@ -777,6 +790,51 @@ export class ClaudeResultHandler {
   ): Promise<void> {
     const planPath = `${sessionDir}/plan.json`;
     await this.storage.writeJson(planPath, composablePlan);
+  }
+
+  /**
+   * Merge new plan steps into existing plan, preserving statuses of existing steps.
+   * Used during Stage 2 re-review to add new steps without losing progress.
+   */
+  private async mergePlanSteps(
+    sessionDir: string,
+    newSteps: ClaudeResult['parsed']['planSteps']
+  ): Promise<void> {
+    const planPath = `${sessionDir}/plan.json`;
+    const plan = await this.storage.readJson<Plan>(planPath);
+
+    if (!plan) return;
+
+    const existingStepIds = new Set(plan.steps.map(s => s.id));
+    let addedCount = 0;
+
+    for (const newStep of newSteps) {
+      if (!existingStepIds.has(newStep.id)) {
+        // Add new step at the end with next orderIndex
+        const maxOrderIndex = plan.steps.length > 0
+          ? Math.max(...plan.steps.map(s => s.orderIndex))
+          : -1;
+
+        plan.steps.push({
+          id: newStep.id,
+          parentId: newStep.parentId,
+          orderIndex: maxOrderIndex + 1,
+          title: newStep.title,
+          description: newStep.description,
+          status: 'pending',
+          metadata: {},
+        });
+        addedCount++;
+        console.log(`[Stage 2] Added new step: ${newStep.id} - ${newStep.title}`);
+      }
+    }
+
+    if (addedCount > 0) {
+      plan.planVersion = (plan.planVersion || 0) + 1;
+      // Don't reset approval - Stage 2 will handle approval flow
+      await this.storage.writeJson(planPath, plan);
+      console.log(`[Stage 2] Merged ${addedCount} new steps into plan for ${sessionDir}`);
+    }
   }
 
   /**
