@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
-import type { PlanStep } from '@claude-code-web/shared';
+import type { PlanStep, StepComplexity } from '@claude-code-web/shared';
 
 interface PlanNodeData {
   step: PlanStep;
@@ -15,9 +15,35 @@ const statusColors: Record<string, { bg: string; border: string; text: string }>
   failed: { bg: 'bg-red-900/50', border: 'border-red-500', text: 'text-red-200' },
 };
 
+const complexityColors: Record<StepComplexity, { bg: string; text: string; label: string }> = {
+  low: { bg: 'bg-green-900/60', text: 'text-green-300', label: 'Low' },
+  medium: { bg: 'bg-yellow-900/60', text: 'text-yellow-300', label: 'Med' },
+  high: { bg: 'bg-red-900/60', text: 'text-red-300', label: 'High' },
+};
+
+/**
+ * Standalone complexity badge component for use outside PlanNode
+ */
+export function ComplexityBadge({ complexity }: { complexity: StepComplexity | undefined }) {
+  const resolvedComplexity = complexity || 'medium';
+  const style = complexityColors[resolvedComplexity];
+
+  return (
+    <span
+      className={`text-xs font-medium px-1.5 py-0.5 rounded ${style.bg} ${style.text}`}
+      title={`Complexity: ${resolvedComplexity}`}
+      data-testid="complexity-badge"
+    >
+      {style.label}
+    </span>
+  );
+}
+
 function PlanNode({ data }: NodeProps<PlanNodeData>) {
   const { step, index } = data;
   const colors = statusColors[step.status] || statusColors.pending;
+  const complexity = step.complexity || 'medium';
+  const complexityStyle = complexityColors[complexity];
 
   return (
     <div
@@ -28,6 +54,14 @@ function PlanNode({ data }: NodeProps<PlanNodeData>) {
       <div className="flex items-center gap-2 mb-2">
         <span className={`text-xs font-medium px-2 py-0.5 rounded ${colors.bg} ${colors.text}`}>
           Step {index + 1}
+        </span>
+        {/* Complexity badge */}
+        <span
+          className={`text-xs font-medium px-1.5 py-0.5 rounded ${complexityStyle.bg} ${complexityStyle.text}`}
+          title={`Complexity: ${complexity}`}
+          data-testid="complexity-badge"
+        >
+          {complexityStyle.label}
         </span>
         {step.status === 'in_progress' && (
           <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
