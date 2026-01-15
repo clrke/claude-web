@@ -426,7 +426,7 @@ const STAGE_QUESTION_TITLES: Record<number, string> = {
 };
 
 function QuestionsSection({ questions, stage }: { questions: Question[]; stage: number }) {
-  const { submitAllAnswers } = useSessionStore();
+  const { submitAllAnswers, plan } = useSessionStore();
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
   const [remarks, setRemarks] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -475,6 +475,7 @@ function QuestionsSection({ questions, stage }: { questions: Question[]; stage: 
           question={question}
           selectedValue={selectedAnswers[question.id]}
           onSelect={(value) => handleSelectAnswer(question.id, value)}
+          plan={plan}
         />
       ))}
 
@@ -515,16 +516,70 @@ function QuestionsSection({ questions, stage }: { questions: Question[]; stage: 
 }
 
 /**
- * Renders simple markdown: **bold**, `code`, and newlines
+ * Tooltip component for displaying step details on hover
  */
-function SimpleMarkdown({ text, className = '' }: { text: string; className?: string }) {
+function StepTooltip({ step }: { step: PlanStep }) {
+  return (
+    <div className="absolute z-50 w-96 max-w-[90vw] p-4 bg-gray-900 border border-gray-700 rounded-lg shadow-xl text-sm left-0 bottom-full mb-2">
+      <div className="font-medium text-white mb-2">
+        Step {step.orderIndex + 1}: {step.title}
+      </div>
+      <div className="text-gray-300 text-xs leading-relaxed whitespace-pre-wrap">
+        {step.description}
+      </div>
+      {step.complexity && (
+        <div className="mt-2">
+          <ComplexityBadge complexity={step.complexity} />
+        </div>
+      )}
+      {/* Arrow pointing down */}
+      <div className="absolute left-4 top-full w-0 h-0 border-l-8 border-r-8 border-t-8 border-transparent border-t-gray-700" />
+    </div>
+  );
+}
+
+/**
+ * Highlighted step reference with hover tooltip
+ */
+function StepReference({ stepNumber, plan }: { stepNumber: number; plan?: Plan | null }) {
+  const [showTooltip, setShowTooltip] = useState(false);
+
+  // Find the step by orderIndex (0-based), stepNumber in text is 1-based
+  const step = plan?.steps.find((s) => s.orderIndex === stepNumber - 1);
+
+  if (!step) {
+    // If no step found, just render the text normally
+    return <span>Step {stepNumber}</span>;
+  }
+
+  return (
+    <span
+      className="relative inline-block"
+      onMouseEnter={() => setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <span className="text-blue-400 hover:text-blue-300 cursor-help underline decoration-dotted underline-offset-2">
+        Step {stepNumber}
+      </span>
+      {showTooltip && <StepTooltip step={step} />}
+    </span>
+  );
+}
+
+/**
+ * Renders simple markdown: **bold**, `code`, and newlines
+ * Also detects "Step X" references and highlights them with tooltips when plan is provided
+ */
+function SimpleMarkdown({ text, className = '', plan }: { text: string; className?: string; plan?: Plan | null }) {
   const rendered = useMemo(() => {
     // Split by newlines first
     return text.split('\n').map((line, lineIndex) => {
-      // Process inline markdown: **bold** and `code`
+      // Process inline markdown: **bold**, `code`, and Step X references
       const parts: (string | JSX.Element)[] = [];
       let lastIndex = 0;
-      const regex = /(\*\*(.+?)\*\*)|(`(.+?)`)/g;
+      // Added Step X pattern (case insensitive, captures the number)
+      // Matches "Step 4" or "Step-4" formats
+      const regex = /(\*\*(.+?)\*\*)|(`(.+?)`)|(\bStep[\s-](\d+)\b)/gi;
       let match;
 
       while ((match = regex.exec(line)) !== null) {
@@ -543,6 +598,12 @@ function SimpleMarkdown({ text, className = '' }: { text: string; className?: st
               {match[4]}
             </code>
           );
+        } else if (match[6]) {
+          // Step X reference
+          const stepNumber = parseInt(match[6], 10);
+          parts.push(
+            <StepReference key={`${lineIndex}-${match.index}`} stepNumber={stepNumber} plan={plan} />
+          );
         }
 
         lastIndex = match.index + match[0].length;
@@ -560,7 +621,7 @@ function SimpleMarkdown({ text, className = '' }: { text: string; className?: st
         </span>
       );
     });
-  }, [text]);
+  }, [text, plan]);
 
   return <span className={className}>{rendered}</span>;
 }
@@ -569,10 +630,12 @@ function QuestionCard({
   question,
   selectedValue,
   onSelect,
+  plan,
 }: {
   question: Question;
   selectedValue?: string;
   onSelect: (value: string) => void;
+  plan?: Plan | null;
 }) {
   const [showOther, setShowOther] = useState(false);
   const [otherText, setOtherText] = useState('');
@@ -597,7 +660,7 @@ function QuestionCard({
   return (
     <div className="bg-gray-800 rounded-lg p-6">
       <div className="font-medium mb-4">
-        <SimpleMarkdown text={question.questionText} />
+        <SimpleMarkdown text={question.questionText} plan={plan} />
       </div>
       <div className="space-y-2">
         {question.options.map(option => {
