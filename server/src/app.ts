@@ -1914,13 +1914,45 @@ export function createApp(
     }
   });
 
-  // Create session (with Zod validation) - automatically starts Stage 1
+  // Check if a project has an active session (for queue warning)
+  app.get('/api/sessions/check-queue', async (req, res) => {
+    try {
+      const projectPath = req.query.projectPath as string;
+      if (!projectPath) {
+        return res.status(400).json({ error: 'projectPath is required' });
+      }
+
+      const projectId = sessionManager.getProjectId(projectPath);
+      const activeSession = await sessionManager.getActiveSessionForProject(projectId);
+      const queuedSessions = await sessionManager.getQueuedSessions(projectId);
+
+      res.json({
+        activeSession,
+        queuedCount: queuedSessions.length,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to check queue';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Create session (with Zod validation) - automatically starts Stage 1 (unless queued)
   app.post('/api/sessions', validate(CreateSessionInputSchema), async (req, res) => {
     try {
       const session = await sessionManager.createSession(req.body);
 
-      // Return response immediately, then start Claude in background
+      // Return response immediately
       res.status(201).json(session);
+
+      // If session is queued, don't start Stage 1 - it will start when the active session completes
+      if (session.status === 'queued') {
+        console.log(`Session ${session.featureId} queued (position ${session.queuePosition}) - waiting for active session to complete`);
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'session_queued', {
+          stage: 0,
+          queuePosition: session.queuePosition,
+        });
+        return;
+      }
 
       // Start Stage 1 Discovery asynchronously
       const prompt = buildStage1Prompt(session);
@@ -2201,16 +2233,15 @@ export function createApp(
       const previousStage = session.currentStage;
 
       if (action === 'merge') {
-        // Mark session as completed
-        const updatedSession = await sessionManager.updateSession(projectId, featureId, {
-          status: 'completed',
-        });
+        // Transition to Stage 7: Completed
+        const updatedSession = await sessionManager.transitionStage(projectId, featureId, 7);
 
         // Update status.json
         const statusPath = `${sessionDir}/status.json`;
         const status = await storage.readJson<Record<string, unknown>>(statusPath);
         if (status) {
           status.status = 'idle';
+          status.currentStage = 7;
           status.lastAction = 'session_completed';
           status.lastActionAt = new Date().toISOString();
           if (feedback) {
@@ -2219,10 +2250,104 @@ export function createApp(
           await storage.writeJson(statusPath, status);
         }
 
-        eventBroadcaster?.executionStatus(projectId, featureId, 'idle', 'session_completed', { stage: 6 });
+        eventBroadcaster?.stageChanged(updatedSession, previousStage);
+        eventBroadcaster?.executionStatus(projectId, featureId, 'idle', 'session_completed', { stage: 7 });
 
         console.log(`Session ${featureId} marked as completed by user`);
-        res.json({ success: true, session: updatedSession });
+
+        // Start next queued session if one exists
+        const nextSession = await sessionManager.getNextQueuedSession(projectId);
+        if (nextSession) {
+          const startedSession = await sessionManager.startQueuedSession(projectId, nextSession.featureId);
+
+          // Recalculate queue positions for remaining queued sessions
+          await sessionManager.recalculateQueuePositions(projectId);
+
+          console.log(`Starting queued session: ${nextSession.featureId}`);
+
+          // Spawn Stage 1 for the new session
+          const prompt = buildStage1Prompt(startedSession);
+          const statusPath = `${startedSession.projectId}/${startedSession.featureId}/status.json`;
+
+          // Update status to running
+          const nextStatus = await storage.readJson<Record<string, unknown>>(statusPath);
+          if (nextStatus) {
+            nextStatus.status = 'running';
+            nextStatus.currentStage = 1;
+            nextStatus.lastAction = 'stage1_started';
+            nextStatus.lastActionAt = new Date().toISOString();
+            await storage.writeJson(statusPath, nextStatus);
+          }
+
+          // Broadcast execution started for the new session
+          eventBroadcaster?.stageChanged(startedSession, 0);
+          eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'spawning_agent' });
+
+          // Save "started" conversation entry
+          const nextSessionDir = `${startedSession.projectId}/${startedSession.featureId}`;
+          await resultHandler.saveConversationStart(nextSessionDir, 1, prompt);
+
+          // Spawn Claude for Stage 1
+          let hasReceivedOutput = false;
+          orchestrator.spawn({
+            prompt,
+            projectPath: startedSession.projectPath,
+            allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+            onOutput: (output, isComplete) => {
+              if (!hasReceivedOutput) {
+                hasReceivedOutput = true;
+                eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'processing_output' });
+              }
+              eventBroadcaster?.claudeOutput(startedSession.projectId, startedSession.featureId, output, isComplete);
+            },
+          }).then(async (result) => {
+            eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'parsing_response' });
+            await resultHandler.handleStage1Result(startedSession, result, prompt);
+            eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'validating_output' });
+            const extractedCount = await applyHaikuPostProcessing(result, startedSession.projectPath, storage, startedSession, resultHandler);
+            eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'saving_results' });
+
+            if (eventBroadcaster) {
+              if (result.parsed.decisions.length > 0) {
+                const questionsPath = `${startedSession.projectId}/${startedSession.featureId}/questions.json`;
+                const questionsData = await storage.readJson<{ questions: Question[] }>(questionsPath);
+                if (questionsData) {
+                  const newQuestions = questionsData.questions.slice(-result.parsed.decisions.length);
+                  eventBroadcaster.questionsAsked(startedSession.projectId, startedSession.featureId, newQuestions);
+                }
+              }
+
+              if (result.parsed.planSteps.length > 0) {
+                const planPath = `${startedSession.projectId}/${startedSession.featureId}/plan.json`;
+                const plan = await storage.readJson<Plan>(planPath);
+                if (plan) {
+                  eventBroadcaster.planUpdated(startedSession.projectId, startedSession.featureId, plan);
+                }
+              }
+
+              eventBroadcaster.executionStatus(
+                startedSession.projectId,
+                startedSession.featureId,
+                result.isError ? 'error' : 'idle',
+                result.isError ? 'stage1_error' : 'stage1_complete',
+                { stage: 1 }
+              );
+            }
+
+            if (!result.isError) {
+              await handleStage1Completion(startedSession, result, storage, sessionManager, resultHandler, eventBroadcaster);
+            }
+
+            console.log(`Stage 1 ${result.isError ? 'failed' : 'completed'} for ${startedSession.featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
+          }).catch((error) => {
+            console.error(`Stage 1 spawn error for ${startedSession.featureId}:`, error);
+            eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'error', 'stage1_spawn_error', { stage: 1 });
+          });
+
+          res.json({ success: true, session: updatedSession, nextSession: startedSession });
+        } else {
+          res.json({ success: true, session: updatedSession });
+        }
 
       } else if (action === 'plan_changes') {
         // Return to Stage 2 for plan changes

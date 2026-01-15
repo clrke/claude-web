@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { Session } from '@claude-code-web/shared';
 
 interface FormData {
   projectPath: string;
@@ -14,6 +15,8 @@ export default function NewSession() {
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
+  const [queuedCount, setQueuedCount] = useState(0);
   const [formData, setFormData] = useState<FormData>({
     projectPath: '',
     title: '',
@@ -26,6 +29,38 @@ export default function NewSession() {
   const updateField = <K extends keyof FormData>(field: K, value: FormData[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
+
+  // Check for active sessions when project path changes
+  const checkActiveSession = useCallback(async (projectPath: string) => {
+    if (!projectPath.trim()) {
+      setActiveSession(null);
+      setQueuedCount(0);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/sessions/check-queue?projectPath=${encodeURIComponent(projectPath)}`);
+      if (response.ok) {
+        const data = await response.json();
+        setActiveSession(data.activeSession || null);
+        setQueuedCount(data.queuedCount || 0);
+      } else {
+        setActiveSession(null);
+        setQueuedCount(0);
+      }
+    } catch {
+      setActiveSession(null);
+      setQueuedCount(0);
+    }
+  }, []);
+
+  // Debounce the active session check
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      checkActiveSession(formData.projectPath);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [formData.projectPath, checkActiveSession]);
 
   const addCriterion = () => {
     setFormData(prev => ({
@@ -112,6 +147,27 @@ export default function NewSession() {
             className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             required
           />
+          {activeSession && (
+            <div className="mt-2 p-3 bg-yellow-900/30 border border-yellow-700/50 rounded-lg text-yellow-200 text-sm">
+              <div className="flex items-start gap-2">
+                <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div>
+                  <p className="font-medium">Session will be queued</p>
+                  <p className="text-yellow-300/80 mt-1">
+                    This project has an active session: <span className="font-medium">{activeSession.title}</span>.
+                    Your new session will be queued and will start automatically when the current session completes.
+                    {queuedCount > 0 && (
+                      <span className="block mt-1">
+                        {queuedCount} other session{queuedCount > 1 ? 's' : ''} already in queue.
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div>

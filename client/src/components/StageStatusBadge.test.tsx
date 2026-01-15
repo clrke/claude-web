@@ -79,7 +79,20 @@ describe('StageStatusBadge', () => {
       );
 
       expect(screen.getByText(/Stage 6:/)).toBeInTheDocument();
-      expect(screen.getByText(/Merge/)).toBeInTheDocument();
+      expect(screen.getByText(/Final Approval/)).toBeInTheDocument();
+    });
+
+    it('renders stage number and name for Stage 7', () => {
+      render(
+        <StageStatusBadge
+          stage={7}
+          status="idle"
+          action="session_completed"
+        />
+      );
+
+      expect(screen.getByText(/Stage 7:/)).toBeInTheDocument();
+      expect(screen.getByText(/Completed/)).toBeInTheDocument();
     });
   });
 

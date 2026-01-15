@@ -1,11 +1,12 @@
 export type SessionStatus =
+  | 'queued'           // Waiting for another session to complete
   | 'discovery'        // Stage 1: Feature discovery
   | 'planning'         // Stage 2: Plan review
   | 'implementing'     // Stage 3: Implementation
   | 'pr_creation'      // Stage 4: PR creation
   | 'pr_review'        // Stage 5: PR review
   | 'final_approval'   // Stage 6: Final approval (user decides: merge, return to Stage 2, or re-review)
-  | 'completed'
+  | 'completed'        // Stage 7: Session completed, PR ready to merge
   | 'paused'
   | 'failed';
 
@@ -52,6 +53,10 @@ export interface Session {
   planValidationContext?: string | null;
   /** Number of plan validation attempts in current Stage 2 session */
   planValidationAttempts?: number;
+  /** Queue position when status is 'queued' (1 = next in line) */
+  queuePosition?: number | null;
+  /** Timestamp when session was queued */
+  queuedAt?: string | null;
 }
 
 export interface SessionRuntimeStatus {

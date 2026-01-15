@@ -21,6 +21,7 @@ const STAGE_STATUS_MAP: Record<number, SessionStatus> = {
   4: 'pr_creation',
   5: 'pr_review',
   6: 'final_approval',
+  7: 'completed',
 };
 
 const VALID_TRANSITIONS: Record<number, number[]> = {
@@ -29,7 +30,8 @@ const VALID_TRANSITIONS: Record<number, number[]> = {
   3: [2, 4], // Can go back to 2 for replanning
   4: [5],
   5: [2, 6], // Can go back to 2 for PR review issues, or forward to 6 for final approval
-  6: [2, 5], // Can return to Stage 2 for plan changes, or Stage 5 for re-review
+  6: [2, 5, 7], // Can return to Stage 2 for plan changes, Stage 5 for re-review, or Stage 7 to complete
+  7: [], // Terminal state - no transitions allowed
 };
 
 // Fields that cannot be modified via updateSession
@@ -191,6 +193,12 @@ export class SessionManager {
       throw new Error(`Session already exists: ${projectId}/${featureId}. Use a different title.`);
     }
 
+    // Check if there's already an active session for this project
+    const activeSession = await this.getActiveSessionForProject(projectId);
+    const queuedSessions = await this.getQueuedSessions(projectId);
+    const isQueued = activeSession !== null;
+    const queuePosition = isQueued ? queuedSessions.length + 1 : null;
+
     // Create session directory
     await this.storage.ensureDir(sessionPath);
     await this.storage.ensureDir(`${sessionPath}/plan-history`);
@@ -210,8 +218,10 @@ export class SessionManager {
       baseBranch: input.baseBranch || 'main',
       featureBranch: `feature/${featureId}`,
       baseCommitSha,
-      status: 'discovery',
-      currentStage: 1,
+      status: isQueued ? 'queued' : 'discovery',
+      currentStage: isQueued ? 0 : 1, // Stage 0 means not started yet
+      queuePosition,
+      queuedAt: isQueued ? now : null,
       replanningCount: 0,
       claudeSessionId: null,
       claudeStage3SessionId: null,
@@ -257,9 +267,9 @@ export class SessionManager {
       version: '1.0',
       sessionId,
       timestamp: now,
-      currentStage: 1,
+      currentStage: isQueued ? 0 : 1,
       currentStepId: null,
-      status: 'idle',
+      status: isQueued ? 'queued' : 'idle',
       claudeSpawnCount: 0,
       callsThisHour: 0,
       maxCallsPerHour: 100,
@@ -267,7 +277,7 @@ export class SessionManager {
       circuitBreakerState: 'CLOSED',
       lastOutputLength: 0,
       exitSignals,
-      lastAction: 'session_created',
+      lastAction: isQueued ? 'session_queued' : 'session_created',
       lastActionAt: now,
     });
 
@@ -357,6 +367,78 @@ export class SessionManager {
     return allSessions.sort((a, b) =>
       new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     );
+  }
+
+  /**
+   * Get the currently active session for a project (not queued/completed/paused/failed)
+   * Returns null if no active session exists
+   */
+  async getActiveSessionForProject(projectId: string): Promise<Session | null> {
+    const sessions = await this.listSessions(projectId);
+    const activeStatuses: SessionStatus[] = [
+      'discovery', 'planning', 'implementing', 'pr_creation', 'pr_review', 'final_approval'
+    ];
+
+    return sessions.find(s => activeStatuses.includes(s.status)) || null;
+  }
+
+  /**
+   * Get all queued sessions for a project, sorted by queue position
+   */
+  async getQueuedSessions(projectId: string): Promise<Session[]> {
+    const sessions = await this.listSessions(projectId);
+    return sessions
+      .filter(s => s.status === 'queued')
+      .sort((a, b) => (a.queuePosition || 0) - (b.queuePosition || 0));
+  }
+
+  /**
+   * Get the next queued session for a project (lowest queue position)
+   */
+  async getNextQueuedSession(projectId: string): Promise<Session | null> {
+    const queuedSessions = await this.getQueuedSessions(projectId);
+    return queuedSessions[0] || null;
+  }
+
+  /**
+   * Start a queued session (transition from queued to discovery)
+   */
+  async startQueuedSession(projectId: string, featureId: string): Promise<Session> {
+    const session = await this.getSession(projectId, featureId);
+
+    if (!session) {
+      throw new Error(`Session not found: ${projectId}/${featureId}`);
+    }
+
+    if (session.status !== 'queued') {
+      throw new Error(`Session is not queued: ${session.status}`);
+    }
+
+    // Check no other active session exists
+    const activeSession = await this.getActiveSessionForProject(projectId);
+    if (activeSession) {
+      throw new Error(`Cannot start queued session: another session is active (${activeSession.featureId})`);
+    }
+
+    return this.updateSession(projectId, featureId, {
+      status: 'discovery',
+      currentStage: 1,
+      queuePosition: null,
+      queuedAt: null,
+    });
+  }
+
+  /**
+   * Recalculate queue positions for all queued sessions in a project
+   */
+  async recalculateQueuePositions(projectId: string): Promise<void> {
+    const queuedSessions = await this.getQueuedSessions(projectId);
+
+    for (let i = 0; i < queuedSessions.length; i++) {
+      await this.updateSession(projectId, queuedSessions[i].featureId, {
+        queuePosition: i + 1,
+      });
+    }
   }
 
   async transitionStage(projectId: string, featureId: string, targetStage: number): Promise<Session> {

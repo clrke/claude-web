@@ -21,6 +21,7 @@ export interface ExecutionStatusOptions {
   stepId?: string;
   progress?: StepProgress;
   isIntermediate?: boolean;
+  queuePosition?: number | null;
 }
 
 /**
