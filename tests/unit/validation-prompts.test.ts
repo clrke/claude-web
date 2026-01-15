@@ -263,5 +263,118 @@ describe('Validation Prompts', () => {
         expect(prompt).toContain('No plan steps defined yet');
       });
     });
+
+    describe('all preference combinations', () => {
+      it('should generate correct rules for restrictive preferences', () => {
+        const restrictive: UserPreferences = {
+          riskComfort: 'low',
+          speedVsQuality: 'quality',
+          scopeFlexibility: 'fixed',
+          detailLevel: 'minimal',
+          autonomyLevel: 'guided',
+        };
+
+        const prompt = buildDecisionValidationPrompt(mockDecision, mockPlan, restrictive);
+
+        // Low risk should PASS risk questions
+        expect(prompt).toContain('PASS questions about risky trade-offs');
+        // Fixed scope should FILTER expansions
+        expect(prompt).toContain('FILTER scope expansion questions');
+        // Minimal detail should FILTER low priority
+        expect(prompt).toContain('FILTER priority 3');
+        // Guided autonomy should PASS most
+        expect(prompt).toContain('PASS most implementation detail questions');
+      });
+
+      it('should generate correct rules for permissive preferences', () => {
+        const permissive: UserPreferences = {
+          riskComfort: 'high',
+          speedVsQuality: 'speed',
+          scopeFlexibility: 'open',
+          detailLevel: 'detailed',
+          autonomyLevel: 'autonomous',
+        };
+
+        const prompt = buildDecisionValidationPrompt(mockDecision, mockPlan, permissive);
+
+        // High risk should FILTER minor risk questions
+        expect(prompt).toContain('FILTER minor risk-related questions');
+        // Open scope should PASS expansions
+        expect(prompt).toContain('PASS scope expansion questions');
+        // Detailed level should PASS most
+        expect(prompt).toContain('PASS most questions across all priority levels');
+        // Autonomous should FILTER minor details
+        expect(prompt).toContain('FILTER minor implementation detail questions');
+      });
+    });
+
+    describe('plan step status display', () => {
+      it('should show correct status icons for different step statuses', () => {
+        const planWithStatuses: Plan = {
+          ...mockPlan,
+          steps: [
+            { id: 'step-1', title: 'Pending step', description: 'desc', status: 'pending', order: 1 },
+            { id: 'step-2', title: 'In progress step', description: 'desc', status: 'in_progress', order: 2 },
+            { id: 'step-3', title: 'Completed step', description: 'desc', status: 'completed', order: 3 },
+            { id: 'step-4', title: 'Blocked step', description: 'desc', status: 'blocked', order: 4 },
+            { id: 'step-5', title: 'Skipped step', description: 'desc', status: 'skipped', order: 5 },
+            { id: 'step-6', title: 'Needs review step', description: 'desc', status: 'needs_review', order: 6 },
+          ],
+        };
+
+        const prompt = buildDecisionValidationPrompt(mockDecision, planWithStatuses);
+
+        expect(prompt).toContain('[ ] Pending step');
+        expect(prompt).toContain('[~] In progress step');
+        expect(prompt).toContain('[x] Completed step');
+        expect(prompt).toContain('[!] Blocked step');
+        expect(prompt).toContain('[-] Skipped step');
+        expect(prompt).toContain('[?] Needs review step');
+      });
+    });
+
+    describe('preference filter reason format', () => {
+      it('should include preference-based filter reason format in output instructions', () => {
+        const prompt = buildDecisionValidationPrompt(mockDecision, mockPlan, DEFAULT_USER_PREFERENCES);
+
+        expect(prompt).toContain('If filtered by preference - filter out');
+        expect(prompt).toContain('Filtered: [preference reason');
+      });
+
+      it('should instruct to consider user preferences', () => {
+        const prompt = buildDecisionValidationPrompt(mockDecision, mockPlan, DEFAULT_USER_PREFERENCES);
+
+        expect(prompt).toContain('Consider User Preferences');
+        expect(prompt).toContain('Apply preference-based filtering rules if provided');
+      });
+    });
+
+    describe('medium/balanced preference values', () => {
+      it('should include balanced rules for medium risk comfort', () => {
+        const mediumRisk: UserPreferences = { ...DEFAULT_USER_PREFERENCES, riskComfort: 'medium' };
+        const prompt = buildDecisionValidationPrompt(mockDecision, mockPlan, mediumRisk);
+
+        expect(prompt).toContain('Use judgment on risk-related questions');
+        expect(prompt).toContain('PASS for significant risks, FILTER for minor uncertainties');
+      });
+
+      it('should include balanced rules for standard detail level', () => {
+        const standardDetail: UserPreferences = { ...DEFAULT_USER_PREFERENCES, detailLevel: 'standard' };
+        const prompt = buildDecisionValidationPrompt(mockDecision, mockPlan, standardDetail);
+
+        expect(prompt).toContain('PASS priority 1-2 questions');
+        expect(prompt).toContain('Use judgment on priority 3 questions');
+        expect(prompt).toContain('Balance thoroughness with efficiency');
+      });
+
+      it('should include balanced rules for collaborative autonomy', () => {
+        const collaborative: UserPreferences = { ...DEFAULT_USER_PREFERENCES, autonomyLevel: 'collaborative' };
+        const prompt = buildDecisionValidationPrompt(mockDecision, mockPlan, collaborative);
+
+        expect(prompt).toContain('PASS significant implementation questions');
+        expect(prompt).toContain('FILTER minor implementation details Claude can decide');
+        expect(prompt).toContain('Balance user involvement with efficiency');
+      });
+    });
   });
 });
