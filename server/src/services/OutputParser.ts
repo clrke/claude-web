@@ -161,7 +161,11 @@ export class OutputParser {
           const optionMatch = line.match(/^-\s+(?:\*?\*?Option\s+\w+:\s*\*?\*?\s*)?(.+?)(?:\s+\(recommended\))?$/i);
           if (optionMatch) {
             const isRecommended = hasRecommendedSuffix;
-            const label = optionMatch[1].replace(/\s*\(recommended\)\s*/i, '').trim();
+            // Strip markdown bold markers (**) from label - they shouldn't be in option text
+            const label = optionMatch[1]
+              .replace(/\s*\(recommended\)\s*/i, '')
+              .replace(/^\*\*|\*\*$/g, '') // Strip leading/trailing **
+              .trim();
             options.push({ label, recommended: isRecommended });
           }
         } else if (line.trim()) {
