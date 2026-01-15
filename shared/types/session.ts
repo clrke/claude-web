@@ -114,4 +114,6 @@ export interface CreateSessionInput {
   affectedFiles?: string[];
   technicalNotes?: string;
   baseBranch?: string;
+  /** Optional preferences to use for this session (overrides project defaults) */
+  preferences?: UserPreferences;
 }

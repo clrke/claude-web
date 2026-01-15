@@ -159,7 +159,7 @@ export class SessionManager {
     return `${projectId}/${featureId}`;
   }
 
-  async createSession(input: CreateSessionInput, preferences?: UserPreferences): Promise<Session> {
+  async createSession(input: CreateSessionInput, projectPreferences?: UserPreferences): Promise<Session> {
     // Validate required fields
     if (!input.title?.trim()) {
       throw new Error('Title is required');
@@ -167,6 +167,9 @@ export class SessionManager {
     if (!input.projectPath?.trim()) {
       throw new Error('Project path is required');
     }
+
+    // Determine preferences: input.preferences takes priority over projectPreferences
+    const preferences = input.preferences || projectPreferences;
 
     // Validate project path if enabled (README lines 2133-2144)
     if (this.options.validateProjectPath) {

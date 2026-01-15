@@ -227,6 +227,74 @@ describe('SessionManager', () => {
       expect(session.preferences?.detailLevel).toBe('standard');
       expect(session.preferences?.autonomyLevel).toBe('collaborative');
     });
+
+    it('should use input.preferences when provided in input', async () => {
+      const inputPrefs: UserPreferences = {
+        riskComfort: 'high',
+        speedVsQuality: 'quality',
+        scopeFlexibility: 'open',
+        detailLevel: 'detailed',
+        autonomyLevel: 'autonomous',
+      };
+
+      const session = await manager.createSession({
+        ...validInput,
+        title: 'Input Prefs Test',
+        preferences: inputPrefs,
+      });
+
+      expect(session.preferences).toEqual(inputPrefs);
+    });
+
+    it('should prioritize input.preferences over projectPreferences parameter', async () => {
+      const inputPrefs: UserPreferences = {
+        riskComfort: 'high',
+        speedVsQuality: 'quality',
+        scopeFlexibility: 'open',
+        detailLevel: 'detailed',
+        autonomyLevel: 'autonomous',
+      };
+
+      const projectPrefs: UserPreferences = {
+        riskComfort: 'low',
+        speedVsQuality: 'speed',
+        scopeFlexibility: 'fixed',
+        detailLevel: 'minimal',
+        autonomyLevel: 'guided',
+      };
+
+      const session = await manager.createSession(
+        {
+          ...validInput,
+          title: 'Priority Test',
+          preferences: inputPrefs,
+        },
+        projectPrefs
+      );
+
+      // input.preferences should take priority
+      expect(session.preferences).toEqual(inputPrefs);
+    });
+
+    it('should use projectPreferences when input.preferences is not provided', async () => {
+      const projectPrefs: UserPreferences = {
+        riskComfort: 'low',
+        speedVsQuality: 'speed',
+        scopeFlexibility: 'fixed',
+        detailLevel: 'minimal',
+        autonomyLevel: 'guided',
+      };
+
+      const session = await manager.createSession(
+        {
+          ...validInput,
+          title: 'Project Prefs Test',
+        },
+        projectPrefs
+      );
+
+      expect(session.preferences).toEqual(projectPrefs);
+    });
   });
 
   describe('getSession', () => {

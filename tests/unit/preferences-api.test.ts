@@ -370,5 +370,81 @@ describe('Project Preferences API', () => {
 
       expect(savedSession?.preferences).toEqual(customPrefs);
     });
+
+    it('should allow passing preferences in session creation request', async () => {
+      const inputPrefs: UserPreferences = {
+        riskComfort: 'high',
+        speedVsQuality: 'quality',
+        scopeFlexibility: 'open',
+        detailLevel: 'detailed',
+        autonomyLevel: 'autonomous',
+      };
+
+      const response = await request(app)
+        .post('/api/sessions')
+        .send({
+          title: 'Feature With Input Prefs',
+          featureDescription: 'Testing input preferences',
+          projectPath: '/test/project/input-prefs',
+          preferences: inputPrefs,
+        });
+
+      expect(response.status).toBe(201);
+      expect(response.body.preferences).toEqual(inputPrefs);
+    });
+
+    it('should prioritize request preferences over project preferences', async () => {
+      const projectPrefs: UserPreferences = {
+        riskComfort: 'low',
+        speedVsQuality: 'speed',
+        scopeFlexibility: 'fixed',
+        detailLevel: 'minimal',
+        autonomyLevel: 'guided',
+      };
+
+      const inputPrefs: UserPreferences = {
+        riskComfort: 'high',
+        speedVsQuality: 'quality',
+        scopeFlexibility: 'open',
+        detailLevel: 'detailed',
+        autonomyLevel: 'autonomous',
+      };
+
+      // First, save project preferences
+      const projectId = sessionManager.getProjectId('/test/project/priority-test');
+      await storage.writeJson(`${projectId}/preferences.json`, projectPrefs);
+
+      // Create session with input preferences (should override project preferences)
+      const response = await request(app)
+        .post('/api/sessions')
+        .send({
+          title: 'Priority Test Feature',
+          featureDescription: 'Testing preference priority',
+          projectPath: '/test/project/priority-test',
+          preferences: inputPrefs,
+        });
+
+      expect(response.status).toBe(201);
+      expect(response.body.preferences).toEqual(inputPrefs);
+    });
+
+    it('should reject invalid preferences in session creation request', async () => {
+      const response = await request(app)
+        .post('/api/sessions')
+        .send({
+          title: 'Invalid Prefs Feature',
+          featureDescription: 'Testing invalid preferences',
+          projectPath: '/test/project/invalid-prefs',
+          preferences: {
+            riskComfort: 'extreme', // invalid
+            speedVsQuality: 'balanced',
+            scopeFlexibility: 'flexible',
+            detailLevel: 'standard',
+            autonomyLevel: 'collaborative',
+          },
+        });
+
+      expect(response.status).toBe(400);
+    });
   });
 });

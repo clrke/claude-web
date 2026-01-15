@@ -15,6 +15,15 @@ export const AcceptanceCriterionSchema = z.object({
 // Valid git branch name pattern
 const gitBranchNamePattern = /^[a-zA-Z0-9._/-]+$/;
 
+// User preferences schema for decision filtering (defined early for use in CreateSessionInputSchema)
+export const UserPreferencesSchema = z.object({
+  riskComfort: z.enum(['low', 'medium', 'high']),
+  speedVsQuality: z.enum(['speed', 'balanced', 'quality']),
+  scopeFlexibility: z.enum(['fixed', 'flexible', 'open']),
+  detailLevel: z.enum(['minimal', 'standard', 'detailed']),
+  autonomyLevel: z.enum(['guided', 'collaborative', 'autonomous']),
+});
+
 // Create session input schema
 export const CreateSessionInputSchema = z.object({
   title: z
@@ -65,6 +74,8 @@ export const CreateSessionInputSchema = z.object({
     .regex(gitBranchNamePattern, 'Invalid branch name')
     .optional()
     .default('main'),
+
+  preferences: UserPreferencesSchema.optional(),
 });
 
 // Update session input schema (partial, for PATCH requests)
@@ -107,15 +118,6 @@ export const PlanApprovalInputSchema = z.object({}).strict();
 // Request changes input schema
 export const RequestChangesInputSchema = z.object({
   feedback: z.string().min(1).max(10000),
-});
-
-// User preferences schema for decision filtering
-export const UserPreferencesSchema = z.object({
-  riskComfort: z.enum(['low', 'medium', 'high']),
-  speedVsQuality: z.enum(['speed', 'balanced', 'quality']),
-  scopeFlexibility: z.enum(['fixed', 'flexible', 'open']),
-  detailLevel: z.enum(['minimal', 'standard', 'detailed']),
-  autonomyLevel: z.enum(['guided', 'collaborative', 'autonomous']),
 });
 
 export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
