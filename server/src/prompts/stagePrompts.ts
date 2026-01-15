@@ -66,20 +66,34 @@ ${technicalNotesSection}
 ### Phase 1: Codebase Exploration (MANDATORY - Do this FIRST)
 You MUST explore the codebase before asking any questions. Use the Task tool to spawn parallel exploration agents:
 
-1. **Architecture Agent**: Map the project structure and technology stack.
-   - Find: package.json (dependencies), tsconfig/vite/webpack config (build setup), main entry files
-   - Identify: Monorepo structure, module boundaries, shared packages
-   - Output: List of key directories, frameworks used, build commands
+1. **Architecture Agent**: Quick overview of project structure.
+   - Find: package.json, config files (tsconfig/vite/webpack), main entry points
+   - Output: Tech stack, monorepo structure (if any), build commands
 
-2. **Existing Patterns Agent**: Find how similar features are implemented.
-   - Search for: Components/functions with related names, existing CRUD operations, similar UI patterns
-   - Identify: Naming conventions, file organization patterns, shared utilities
-   - Output: List of relevant existing files with brief descriptions of patterns to follow
+2. **Frontend Agent**: Explore UI layer patterns.
+   - Find: Components related to this feature, state management, styling approach
+   - Check: Existing patterns for similar UI, reusable components, routing
+   - Output: Relevant UI files, patterns to follow, potential reuse
 
-3. **Integration Points Agent**: Identify where the new feature connects to existing code.
-   - Find: API routes (grep for router/app.get/post), database models/schemas, UI entry points
-   - Map: Which existing modules need modification vs new modules to create
-   - Output: List of files to modify and new files to create
+3. **Backend Agent**: Explore API/server layer patterns.
+   - Find: Related API routes, controllers, middleware, business logic
+   - Check: Auth patterns, error handling, validation approach
+   - Output: Relevant API files, patterns to follow, potential reuse
+
+4. **Database Agent**: Explore data layer patterns.
+   - Find: Related models/schemas, migrations, query patterns
+   - Check: ORM usage, relationships, indexing patterns
+   - Output: Relevant data files, schema patterns to follow
+
+5. **Integration Agent**: Explore frontend-backend boundaries.
+   - Find: API client code, type definitions shared between layers
+   - Check: How data flows between UI and API, contract patterns
+   - Output: Integration patterns, shared types, potential contract issues
+
+6. **Test Agent**: Explore testing patterns.
+   - Find: Test files for similar features, test utilities, mocks
+   - Check: Testing framework, coverage patterns, test organization
+   - Output: Test patterns to follow, testing requirements
 
 Wait for ALL exploration agents to complete before proceeding.
 
@@ -295,24 +309,33 @@ ${composablePlanDocs}
 ## Instructions
 1. Use the Task tool to spawn domain-specific subagents for parallel review:
 
-   - **Frontend Agent**: Review UI/client-side steps for completeness.
-     - Check: Component structure, state management approach, styling strategy
-     - Verify: Accessibility considerations, responsive design, error states
+   - **Frontend Agent**: Review UI/client-side steps.
+     - Correctness: Component structure, state management, error states
+     - Security: XSS risks, sensitive data exposure, input sanitization
+     - Performance: Bundle size, render optimization, lazy loading
      - Output: List of UI concerns with severity (critical/major/minor)
 
-   - **Backend Agent**: Review API/server-side steps for correctness.
-     - Check: Endpoint design, request/response contracts, middleware usage
-     - Verify: Error handling strategy, logging approach, API versioning
+   - **Backend Agent**: Review API/server-side steps.
+     - Correctness: Endpoint design, request/response contracts, error handling
+     - Security: Auth checks, injection risks, input validation
+     - Performance: Query efficiency, caching strategy, rate limiting
      - Output: List of backend concerns with severity
 
-   - **Database Agent**: Review data layer steps for safety.
-     - Check: Schema changes, migration strategy, query patterns
-     - Verify: Index usage, foreign key constraints, data validation
+   - **Database Agent**: Review data layer steps.
+     - Correctness: Schema design, migration strategy, relationships
+     - Security: Access controls, sensitive data handling, SQL injection
+     - Performance: Index usage, query patterns, connection pooling
      - Output: List of data concerns with severity
 
-   - **Test Agent**: Review testing strategy for adequacy.
-     - Check: Test types planned (unit/integration/e2e), coverage targets
-     - Verify: Critical paths identified, edge cases considered
+   - **Integration Agent**: Review frontend-backend boundaries.
+     - Correctness: API contracts match, type consistency across layers
+     - Security: Auth token handling, CORS configuration, error exposure
+     - Performance: Payload sizes, request batching, caching headers
+     - Output: List of integration concerns with severity
+
+   - **Test Agent**: Review testing strategy.
+     - Coverage: Unit, integration, e2e tests planned appropriately
+     - Critical paths: Happy paths, error cases, edge cases identified
      - Output: List of testing gaps with severity
 
 2. Check for issues in these categories:
@@ -906,34 +929,41 @@ URL: ${prInfo.url}
 ### Phase 1: Parallel Review (MANDATORY)
 Use the Task tool to spawn review agents in parallel:
 
-1. **Code Review Agent**: Find bugs and logic errors in the diff.
-   - Run: git diff main...HEAD
-   - Check: Off-by-one errors, null checks, boundary conditions, race conditions
-   - Verify: Error messages are helpful, logging is appropriate
-   - Output: List of issues with file:line references and severity
+1. **Frontend Agent**: Review UI/client-side changes.
+   - Run: git diff main...HEAD -- '*.tsx' '*.ts' '*.css' (client paths)
+   - Correctness: Component logic, state handling, error states
+   - Security: XSS risks, sensitive data in client, input sanitization
+   - Performance: Bundle impact, render efficiency, unnecessary re-renders
+   - Output: List of UI issues with file:line refs and severity
 
-2. **Security Agent**: Find security vulnerabilities in the diff.
-   - Run: git diff main...HEAD (focus on user input handling)
-   - Check: SQL/NoSQL injection, XSS, command injection, path traversal
-   - Verify: Auth checks on new endpoints, secrets not hardcoded, CORS configured
-   - Output: List of security issues with OWASP category and severity
+2. **Backend Agent**: Review API/server-side changes.
+   - Run: git diff main...HEAD -- (server paths)
+   - Correctness: Endpoint logic, error handling, edge cases
+   - Security: Auth checks, injection risks, input validation, secrets
+   - Performance: Query efficiency, N+1 issues, caching
+   - Output: List of backend issues with file:line refs and severity
 
-3. **Test Coverage Agent**: Verify new code has adequate tests.
+3. **Database Agent**: Review data layer changes.
+   - Run: git diff main...HEAD -- (schema/migration paths)
+   - Correctness: Schema design, migration safety, relationships
+   - Security: Access controls, sensitive data handling
+   - Performance: Index usage, query patterns
+   - Output: List of data issues with file:line refs and severity
+
+4. **Integration Agent**: Review frontend-backend boundaries.
+   - Check: API contracts match, types consistent across layers
+   - Security: Auth token handling, CORS, error message exposure
+   - Performance: Payload sizes, request patterns
+   - Output: List of integration issues with severity
+
+5. **Test Agent**: Verify test coverage for changes.
    - Run: Find test files matching changed source files
-   - Check: New functions have corresponding test cases
-   - Verify: Happy path, error cases, and edge cases are tested
-   - Output: List of untested code paths with file:line references
+   - Check: New code has tests, edge cases covered
+   - Output: List of untested code paths with file:line refs
 
-4. **Integration Agent**: Verify API contracts match between layers.
-   - Check: TypeScript types/interfaces are consistent across client and server
-   - Verify: Request payloads match API expectations, response shapes are correct
-   - Run: grep for type definitions in changed files
-   - Output: List of contract mismatches with expected vs actual
-
-5. **CI Agent**: Wait for CI to complete and report status.
+6. **CI Agent**: Wait for CI to complete.
    - Run: gh pr checks ${prInfo.url.split('/').pop()} --watch
-   - Wait: Until all checks complete (pass or fail)
-   - Output: Final status of each check (all passing / X failing)
+   - Output: Final status (all passing / X failing)
 
 Wait for ALL agents to complete before proceeding.
 

@@ -1596,9 +1596,12 @@ These files are likely to need changes:
 [PLAN_MODE_ENTERED]
 
 2. Within plan mode, spawn exploration subagents in parallel:
-   - Architecture Agent: Map project structure, frameworks, build commands
-   - Existing Patterns Agent: Find similar features, coding patterns to follow
-   - Integration Points Agent: Identify files to modify vs create
+   - Architecture Agent: Project structure, tech stack, build commands
+   - Frontend Agent: UI patterns, components, state management
+   - Backend Agent: API patterns, middleware, error handling
+   - Database Agent: Schema patterns, query patterns, migrations
+   - Integration Agent: Frontend-backend boundaries, shared types
+   - Test Agent: Testing patterns, coverage approach
 
 3. Based on exploration, ask clarifying questions using progressive disclosure:
    - Start with the most fundamental questions (scope, approach, constraints)
@@ -1648,30 +1651,21 @@ You are reviewing an implementation plan. Find issues and present them as decisi
 This is review {{currentIteration}} of {{targetIterations}} recommended.
 
 ## Instructions
-1. Use the Task tool to spawn domain-specific subagents for parallel review:
+1. Use the Task tool to spawn domain-specific subagents for parallel review.
+   Each agent checks correctness, security, and performance in their domain:
 
-   - Frontend Agent: Review UI/client-side steps for completeness
-     - Check: Component structure, state management, styling strategy
-     - Output: List of UI concerns with severity
-
-   - Backend Agent: Review API/server-side steps for correctness
-     - Check: Endpoint design, error handling, API versioning
-     - Output: List of backend concerns with severity
-
-   - Database Agent: Review data layer steps for safety
-     - Check: Schema changes, migration strategy, query patterns
-     - Output: List of data concerns with severity
-
-   - Test Agent: Review testing strategy for adequacy
-     - Check: Test types planned, coverage targets, edge cases
-     - Output: List of testing gaps with severity
+   - Frontend Agent: Review UI steps (XSS, bundle size, render perf)
+   - Backend Agent: Review API steps (auth, injection, query efficiency)
+   - Database Agent: Review data steps (access controls, indexes, migrations)
+   - Integration Agent: Review contracts (type consistency, CORS, payloads)
+   - Test Agent: Review test strategy (coverage, edge cases)
 
 2. Check for issues in these categories:
-   - Code Quality: Missing error handling, hardcoded values, missing tests
-   - Architecture: Tight coupling, unclear separation of concerns
-   - Security: Injection risks, exposed secrets, missing auth checks
-   - Performance: N+1 queries, missing indexes, large bundle size
-   - Integration: API contract mismatches, missing error handling at boundaries
+   - Code Quality: Missing error handling, hardcoded values
+   - Architecture: Tight coupling, unclear separation
+   - Security: Injection risks, exposed secrets, missing auth
+   - Performance: N+1 queries, missing indexes, bundle size
+   - Plan Structure: Missing complexity ratings, unmapped acceptance criteria
 
 3. Present issues as progressive decisions for the user:
    - Priority 1: Fundamental issues (architecture, security) - ask first
@@ -1865,28 +1859,15 @@ Description: {{prDescription}}
 {{testResults}}
 
 ## Instructions
-1. Use the Task tool to spawn review subagents in parallel:
+1. Use the Task tool to spawn review subagents in parallel.
+   Each agent checks correctness, security, and performance in their domain:
 
-   - Code Review Agent: Find bugs and logic errors in the diff
-     - Run: git diff main...HEAD
-     - Check: Off-by-one errors, null checks, boundary conditions
-     - Output: List of issues with file:line refs and severity
-
-   - Security Agent: Find security vulnerabilities
-     - Check: SQL/XSS injection, exposed secrets, auth checks
-     - Output: List of issues with OWASP category and severity
-
-   - Test Coverage Agent: Verify new code has tests
-     - Check: New functions have test cases, edge cases covered
-     - Output: List of untested code paths with file:line refs
-
-   - Integration Agent: Verify API contracts match
-     - Check: TypeScript types consistent across client/server
-     - Output: List of contract mismatches
-
-   - CI Agent: Wait for CI to complete
-     - Run: gh pr checks {{prNumber}} --watch
-     - Output: Final status of each check
+   - Frontend Agent: Review UI changes (XSS, bundle impact, re-renders)
+   - Backend Agent: Review API changes (auth, injection, N+1 queries)
+   - Database Agent: Review data changes (access controls, indexes)
+   - Integration Agent: Review contracts (type consistency, CORS, payloads)
+   - Test Agent: Verify test coverage for changes
+   - CI Agent: Wait for CI via `gh pr checks {{prNumber}} --watch`
 
 2. Review for:
    - Plan Alignment: Does the code implement what the plan specified?
@@ -2153,44 +2134,27 @@ flowchart LR
 
 Claude Code has built-in subagent support via the Task tool. This section defines **prompt guidance** for instructing Claude Code on what subagents to spawn during different workflow stages.
 
-### Agents by Stage
+### Unified Domain Agents
 
-Each stage uses specialized agents tailored to its purpose:
+The same domain agents are used across stages with stage-appropriate focus. Each agent checks **correctness, security, and performance** within their domain.
 
-#### Stage 1: Discovery Agents
+| Agent | Stage 1 (Explore) | Stage 2 (Review Plan) | Stage 5 (Review PR) |
+|-------|-------------------|----------------------|---------------------|
+| **Architecture** | Project structure, tech stack | - | - |
+| **Frontend** | UI patterns, components | Review UI steps | Review UI changes |
+| **Backend** | API patterns, middleware | Review API steps | Review API changes |
+| **Database** | Schema, query patterns | Review data steps | Review data changes |
+| **Integration** | Frontend-backend boundaries | Review contracts | Review contracts |
+| **Test** | Testing patterns, coverage | Review test strategy | Verify test coverage |
+| **CI** | - | - | Wait for CI status |
 
-| Agent | Purpose | Output |
-|-------|---------|--------|
-| **Architecture Agent** | Map project structure and technology stack | List of key directories, frameworks, build commands |
-| **Existing Patterns Agent** | Find how similar features are implemented | List of relevant files with patterns to follow |
-| **Integration Points Agent** | Identify where new feature connects to existing code | List of files to modify vs create |
-
-#### Stage 2: Plan Review Agents
-
-| Agent | Purpose | Output |
-|-------|---------|--------|
-| **Frontend Agent** | Review UI/client-side steps | List of UI concerns with severity |
-| **Backend Agent** | Review API/server-side steps | List of backend concerns with severity |
-| **Database Agent** | Review data layer steps | List of data concerns with severity |
-| **Test Agent** | Review testing strategy | List of testing gaps with severity |
-
-#### Stage 4: PR Creation Agents
+#### Stage 4: PR Creation Agents (Task-Specific)
 
 | Agent | Purpose | Output |
 |-------|---------|--------|
 | **Diff Analysis Agent** | Review git diff for changes | Summary of additions, modifications, deletions |
 | **Commit History Agent** | Review commit progression | Summary of commit structure |
 | **Test Results Agent** | Review test status | Test coverage summary, untested areas |
-
-#### Stage 5: PR Review Agents
-
-| Agent | Purpose | Output |
-|-------|---------|--------|
-| **Code Review Agent** | Find bugs and logic errors | List of issues with file:line refs and severity |
-| **Security Agent** | Find security vulnerabilities | List of issues with OWASP category and severity |
-| **Test Coverage Agent** | Verify new code has tests | List of untested code paths with file:line refs |
-| **Integration Agent** | Verify API contracts match | List of contract mismatches |
-| **CI Agent** | Wait for CI to complete | Final status of each check |
 
 ### Subagent Failure Handling
 
