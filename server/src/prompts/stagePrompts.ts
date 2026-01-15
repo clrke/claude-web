@@ -71,7 +71,13 @@ Before exploring the codebase, you MUST set up the git branch to ensure you're w
 Run these commands NOW before proceeding to Phase 1. This ensures your codebase exploration reads the most up-to-date code.
 
 ### Phase 1: Codebase Exploration (MANDATORY - Do this AFTER Phase 0)
-You MUST explore the codebase before asking any questions. Use the Task tool to spawn parallel exploration agents:
+You MUST explore the codebase before asking any questions. Use the Task tool to spawn parallel exploration agents.
+
+**IMPORTANT - Subagent Restrictions:**
+When spawning Task subagents in this stage, instruct them to use READ-ONLY tools only:
+- Allowed: Read, Glob, Grep, WebFetch, WebSearch
+- NOT allowed: Edit, Write, Bash (except read-only commands like \`git status\`, \`git log\`)
+Include this restriction in each subagent prompt to prevent unintended modifications.
 
 1. **Architecture Agent**: Quick overview of project structure.
    - Find: package.json, config files (tsconfig/vite/webpack), main entry points
@@ -314,7 +320,13 @@ ${planStepsText}${planFileReference}
 This is review ${currentIteration} of ${targetIterations} recommended.
 ${composablePlanDocs}
 ## Instructions
-1. Use the Task tool to spawn domain-specific subagents for parallel review:
+1. Use the Task tool to spawn domain-specific subagents for parallel review.
+
+**IMPORTANT - Subagent Restrictions:**
+When spawning Task subagents in this stage, instruct them to use READ-ONLY tools only:
+- Allowed: Read, Glob, Grep, WebFetch, WebSearch
+- NOT allowed: Edit, Write, Bash (except read-only commands)
+Include this restriction in each subagent prompt to prevent unintended modifications.
 
    - **Frontend Agent**: Review UI/client-side steps.
      - Correctness: Component structure, state management, error states
@@ -819,24 +831,22 @@ ${planStepsText}${planFileReference}
 ## Instructions
 
 ### Phase 1: Review Changes (MANDATORY)
-Use the Task tool to spawn parallel review agents that examine the changes:
+Review the changes before creating the PR:
 
-1. **Diff Analysis Agent**: Review the git diff for the implementation
+1. **Review git diff**:
    - Run: git diff main...HEAD (or appropriate base branch)
    - Summarize what was added, modified, deleted
    - Note any significant patterns
 
-2. **Commit History Agent**: Review the commit history
+2. **Review commit history**:
    - Run: git log main...HEAD --oneline
    - Summarize the progression of changes
    - Note the commit structure
 
-3. **Test Results Agent**: Review test status
+3. **Review test status**:
    - Check if tests were run and passed
    - Note test coverage for new code
    - Flag any untested areas
-
-Wait for ALL review agents to complete before proceeding.
 
 ### Phase 2: Prepare PR Content
 Based on the review, prepare:
@@ -940,7 +950,13 @@ URL: ${prInfo.url}
 ## Instructions
 
 ### Phase 1: Parallel Review (MANDATORY)
-Use the Task tool to spawn review agents in parallel:
+Use the Task tool to spawn review agents in parallel.
+
+**IMPORTANT - Subagent Restrictions:**
+When spawning Task subagents in this stage, instruct them to use READ-ONLY tools only:
+- Allowed: Read, Glob, Grep, Bash (read-only: git diff, git log, gh pr checks)
+- NOT allowed: Edit, Write, Bash with modifications (no commits, no file changes)
+Include this restriction in each subagent prompt to prevent unintended modifications.
 
 1. **Frontend Agent**: Review UI/client-side changes.
    - Run: git diff main...HEAD -- '*.tsx' '*.ts' '*.css' (client paths)

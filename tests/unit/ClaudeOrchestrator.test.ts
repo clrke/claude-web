@@ -204,7 +204,7 @@ Create authentication
       expect(tools).toContain('Read');
       expect(tools).toContain('Glob');
       expect(tools).toContain('Grep');
-      expect(tools).toContain('Task');
+      expect(tools).toContain('Task');  // Task allowed but prompts restrict subagent to read-only
       expect(tools).not.toContain('Write');
       expect(tools).not.toContain('Edit');
     });
@@ -213,6 +213,7 @@ Create authentication
       const tools = orchestrator.getStageTools(2);
 
       expect(tools).toContain('Read');
+      expect(tools).toContain('Task');  // Task allowed but prompts restrict subagent to read-only
       expect(tools).not.toContain('Write');
     });
 
@@ -240,6 +241,7 @@ Create authentication
       expect(tools).toContain('Read');
       expect(tools).toContain('Bash(git:diff*)');
       expect(tools).toContain('Bash(gh:pr*)');
+      expect(tools).toContain('Task');  // Task allowed but prompts restrict subagent to read-only
       expect(tools).not.toContain('Write');
     });
   });
