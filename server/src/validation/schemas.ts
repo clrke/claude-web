@@ -124,3 +124,4 @@ export type StageTransitionInput = z.infer<typeof StageTransitionInputSchema>;
 export type AnswerQuestionInput = z.infer<typeof AnswerQuestionInputSchema>;
 export type BatchAnswersInput = z.infer<typeof BatchAnswersInputSchema>;
 export type RequestChangesInput = z.infer<typeof RequestChangesInputSchema>;
+export type UserPreferencesInput = z.infer<typeof UserPreferencesSchema>;
