@@ -109,6 +109,15 @@ export const RequestChangesInputSchema = z.object({
   feedback: z.string().min(1).max(10000),
 });
 
+// User preferences schema for decision filtering
+export const UserPreferencesSchema = z.object({
+  riskComfort: z.enum(['low', 'medium', 'high']),
+  speedVsQuality: z.enum(['speed', 'balanced', 'quality']),
+  scopeFlexibility: z.enum(['fixed', 'flexible', 'open']),
+  detailLevel: z.enum(['minimal', 'standard', 'detailed']),
+  autonomyLevel: z.enum(['guided', 'collaborative', 'autonomous']),
+});
+
 export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
 export type UpdateSessionInput = z.infer<typeof UpdateSessionInputSchema>;
 export type StageTransitionInput = z.infer<typeof StageTransitionInputSchema>;
