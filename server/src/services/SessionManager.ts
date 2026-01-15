@@ -12,6 +12,7 @@ import {
   SessionStatus,
   CreateSessionInput,
   ExitSignals,
+  UserPreferences,
 } from '@claude-code-web/shared';
 
 const STAGE_STATUS_MAP: Record<number, SessionStatus> = {
@@ -158,7 +159,7 @@ export class SessionManager {
     return `${projectId}/${featureId}`;
   }
 
-  async createSession(input: CreateSessionInput): Promise<Session> {
+  async createSession(input: CreateSessionInput, projectPreferences?: UserPreferences): Promise<Session> {
     // Validate required fields
     if (!input.title?.trim()) {
       throw new Error('Title is required');
@@ -166,6 +167,9 @@ export class SessionManager {
     if (!input.projectPath?.trim()) {
       throw new Error('Project path is required');
     }
+
+    // Determine preferences: input.preferences takes priority over projectPreferences
+    const preferences = input.preferences || projectPreferences;
 
     // Validate project path if enabled (README lines 2133-2144)
     if (this.options.validateProjectPath) {
@@ -231,6 +235,7 @@ export class SessionManager {
       sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       createdAt: now,
       updatedAt: now,
+      preferences,
     };
 
     await this.storage.writeJson(`${sessionPath}/session.json`, session);

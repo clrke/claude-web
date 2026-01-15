@@ -8,3 +8,13 @@ export {
   SUBSTATE_LABELS,
   STAGE_NAMES,
 } from './stageActivity';
+
+export {
+  generateProjectId,
+  generateProjectIdSync,
+} from './projectId';
+
+export {
+  validatePreferences,
+  isValidPreferences,
+} from './preferencesValidation';

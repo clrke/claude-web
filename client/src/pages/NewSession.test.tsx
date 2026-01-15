@@ -34,9 +34,23 @@ describe('NewSession', () => {
   it('should submit form data to API', async () => {
     const user = userEvent.setup();
 
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/check-queue')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+        });
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({}),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+      });
     });
     global.fetch = fetchMock;
 
@@ -59,8 +73,28 @@ describe('NewSession', () => {
   it('should disable submit button while submitting', async () => {
     const user = userEvent.setup();
 
-    // Create a never-resolving promise to keep the button disabled
-    global.fetch = vi.fn().mockImplementation(() => new Promise(() => {}));
+    // Mock to return check-queue immediately, but never resolve session creation
+    let sessionCallCount = 0;
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/check-queue')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+        });
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+      }
+      // First session call (the actual POST) - never resolve
+      sessionCallCount++;
+      if (sessionCallCount === 1) {
+        return new Promise(() => {});
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+      });
+    });
 
     renderWithRouter(<NewSession />);
 
@@ -70,7 +104,9 @@ describe('NewSession', () => {
 
     await user.click(screen.getByRole('button', { name: /start discovery/i }));
 
-    expect(screen.getByRole('button', { name: /creating/i })).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /creating/i })).toBeDisabled();
+    });
   });
 
   it('should add and remove acceptance criteria', async () => {
@@ -126,6 +162,226 @@ describe('NewSession', () => {
       // Remove button should have aria-label
       const removeButtons = screen.getAllByRole('button', { name: /remove/i });
       expect(removeButtons.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('preferences', () => {
+    it('should render collapsed preferences section by default', () => {
+      renderWithRouter(<NewSession />);
+
+      // Preferences button should be visible
+      expect(screen.getByRole('button', { name: /preferences/i })).toBeInTheDocument();
+      // But preference fields should not be visible
+      expect(screen.queryByText(/risk comfort/i)).not.toBeInTheDocument();
+    });
+
+    it('should expand preferences section when clicked', async () => {
+      const user = userEvent.setup();
+      renderWithRouter(<NewSession />);
+
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
+
+      // All 5 preference fields should be visible
+      expect(screen.getByText(/risk comfort/i)).toBeInTheDocument();
+      expect(screen.getByText(/speed vs quality/i)).toBeInTheDocument();
+      expect(screen.getByText(/scope flexibility/i)).toBeInTheDocument();
+      expect(screen.getByText(/detail level/i)).toBeInTheDocument();
+      expect(screen.getByText(/autonomy level/i)).toBeInTheDocument();
+    });
+
+    it('should have Remember for this project checkbox checked by default', async () => {
+      const user = userEvent.setup();
+      renderWithRouter(<NewSession />);
+
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
+
+      const checkbox = screen.getByRole('checkbox', { name: /remember for this project/i });
+      expect(checkbox).toBeChecked();
+    });
+
+    it('should allow changing preference values', async () => {
+      const user = userEvent.setup();
+      renderWithRouter(<NewSession />);
+
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
+
+      // Change risk comfort to 'high'
+      const highRadio = screen.getByRole('radio', { name: /high/i });
+      await user.click(highRadio);
+      expect(highRadio).toBeChecked();
+
+      // Change speed vs quality to 'quality'
+      const qualityRadio = screen.getByRole('radio', { name: /quality/i });
+      await user.click(qualityRadio);
+      expect(qualityRadio).toBeChecked();
+    });
+
+    it('should load preferences when project path is entered', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              riskComfort: 'high',
+              speedVsQuality: 'quality',
+              scopeFlexibility: 'open',
+              detailLevel: 'detailed',
+              autonomyLevel: 'autonomous',
+            }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({}),
+        });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+
+      // Wait for debounced fetch (check-queue and preferences both get called)
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/preferences'));
+      }, { timeout: 1000 });
+
+      // Expand preferences and verify loaded values
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('radio', { name: /high/i })).toBeChecked();
+        expect(screen.getByRole('radio', { name: /quality/i })).toBeChecked();
+      });
+    });
+
+    it('should save preferences on submit when checkbox is checked', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+          });
+        }
+        if (url.includes('/preferences') && options?.method === 'PUT') {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+        }
+        if (url.includes('/preferences')) {
+          // GET preferences - return defaults
+          return Promise.resolve({
+            ok: false,
+            json: () => Promise.resolve({}),
+          });
+        }
+        // POST /api/sessions
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+        });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+      await user.type(screen.getByPlaceholderText(/add user authentication/i), 'Test Feature');
+      await user.type(screen.getByPlaceholderText(/describe the feature/i), 'Test description');
+
+      await user.click(screen.getByRole('button', { name: /start discovery/i }));
+
+      await waitFor(() => {
+        // Should have called PUT to save preferences
+        const putCalls = (fetchMock.mock.calls as [string, RequestInit?][]).filter(
+          (call) => call[0].includes('/preferences') && call[1]?.method === 'PUT'
+        );
+        expect(putCalls.length).toBeGreaterThan(0);
+      }, { timeout: 3000 });
+    });
+
+    it('should not save preferences on submit when checkbox is unchecked', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+          });
+        }
+        if (url.includes('/preferences') && options?.method === 'GET') {
+          return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+        });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+      await user.type(screen.getByPlaceholderText(/add user authentication/i), 'Test Feature');
+      await user.type(screen.getByPlaceholderText(/describe the feature/i), 'Test description');
+
+      // Expand and uncheck the remember checkbox
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
+      await user.click(screen.getByRole('checkbox', { name: /remember for this project/i }));
+
+      await user.click(screen.getByRole('button', { name: /start discovery/i }));
+
+      await waitFor(() => {
+        // Should NOT have called PUT to save preferences
+        const putCalls = (fetchMock.mock.calls as [string, RequestInit?][]).filter(
+          (call) => call[1]?.method === 'PUT'
+        );
+        expect(putCalls).toHaveLength(0);
+      });
+    });
+
+    it('should include preferences in session creation request', async () => {
+      const user = userEvent.setup();
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+      await user.type(screen.getByPlaceholderText(/add user authentication/i), 'Test Feature');
+      await user.type(screen.getByPlaceholderText(/describe the feature/i), 'Test description');
+
+      // Expand preferences to change a value
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
+      // Change riskComfort to 'high' to prove preferences are included
+      await user.click(screen.getByRole('radio', { name: /high/i }));
+      // Uncheck "remember" to avoid PUT call blocking
+      await user.click(screen.getByRole('checkbox', { name: /remember for this project/i }));
+
+      await user.click(screen.getByRole('button', { name: /start discovery/i }));
+
+      await waitFor(() => {
+        const sessionCall = (fetchMock.mock.calls as [string, RequestInit?][]).find(
+          (call) => call[0] === '/api/sessions' && call[1]?.method === 'POST'
+        );
+        expect(sessionCall).toBeDefined();
+        if (sessionCall) {
+          const body = JSON.parse(sessionCall[1]?.body as string);
+          // Preferences object should be included with the changed value
+          expect(body).toHaveProperty('preferences');
+          expect(body.preferences.riskComfort).toBe('high');
+        }
+      });
     });
   });
 });

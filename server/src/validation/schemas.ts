@@ -15,6 +15,15 @@ export const AcceptanceCriterionSchema = z.object({
 // Valid git branch name pattern
 const gitBranchNamePattern = /^[a-zA-Z0-9._/-]+$/;
 
+// User preferences schema for decision filtering (defined early for use in CreateSessionInputSchema)
+export const UserPreferencesSchema = z.object({
+  riskComfort: z.enum(['low', 'medium', 'high']),
+  speedVsQuality: z.enum(['speed', 'balanced', 'quality']),
+  scopeFlexibility: z.enum(['fixed', 'flexible', 'open']),
+  detailLevel: z.enum(['minimal', 'standard', 'detailed']),
+  autonomyLevel: z.enum(['guided', 'collaborative', 'autonomous']),
+});
+
 // Create session input schema
 export const CreateSessionInputSchema = z.object({
   title: z
@@ -65,6 +74,8 @@ export const CreateSessionInputSchema = z.object({
     .regex(gitBranchNamePattern, 'Invalid branch name')
     .optional()
     .default('main'),
+
+  preferences: UserPreferencesSchema.optional(),
 });
 
 // Update session input schema (partial, for PATCH requests)
@@ -115,3 +126,4 @@ export type StageTransitionInput = z.infer<typeof StageTransitionInputSchema>;
 export type AnswerQuestionInput = z.infer<typeof AnswerQuestionInputSchema>;
 export type BatchAnswersInput = z.infer<typeof BatchAnswersInputSchema>;
 export type RequestChangesInput = z.infer<typeof RequestChangesInputSchema>;
+export type UserPreferencesInput = z.infer<typeof UserPreferencesSchema>;

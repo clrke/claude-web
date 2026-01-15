@@ -27,7 +27,7 @@ import {
   buildSingleStepPrompt,
   buildSingleStepPromptLean,
 } from './prompts/stagePrompts';
-import { Session, PlanStep } from '@claude-code-web/shared';
+import { Session, PlanStep, DEFAULT_USER_PREFERENCES, UserPreferences } from '@claude-code-web/shared';
 import { ClaudeResult } from './services/ClaudeOrchestrator';
 import { Plan, Question } from '@claude-code-web/shared';
 import {
@@ -37,6 +37,7 @@ import {
   AnswerQuestionInputSchema,
   BatchAnswersInputSchema,
   RequestChangesInputSchema,
+  UserPreferencesSchema,
 } from './validation/schemas';
 import {
   isPlanApproved,
@@ -1924,6 +1925,46 @@ export function createApp(
 
   // API Routes
 
+  // Get project preferences (returns saved preferences or defaults)
+  app.get('/api/projects/:projectId/preferences', async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const preferencesPath = `${projectId}/preferences.json`;
+      const savedPreferences = await storage.readJson<UserPreferences>(preferencesPath);
+
+      // Return saved preferences or defaults
+      res.json(savedPreferences || DEFAULT_USER_PREFERENCES);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get preferences';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Save project preferences
+  app.put('/api/projects/:projectId/preferences', async (req, res) => {
+    try {
+      const { projectId } = req.params;
+
+      // Validate preferences with Zod schema
+      const parseResult = UserPreferencesSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({
+          error: 'Invalid preferences',
+          details: parseResult.error.issues
+        });
+      }
+
+      const preferences = parseResult.data;
+      const preferencesPath = `${projectId}/preferences.json`;
+      await storage.writeJson(preferencesPath, preferences);
+
+      res.json(preferences);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save preferences';
+      res.status(500).json({ error: message });
+    }
+  });
+
   // List all sessions across all projects
   app.get('/api/sessions', async (_req, res) => {
     try {
@@ -1960,7 +2001,12 @@ export function createApp(
   // Create session (with Zod validation) - automatically starts Stage 1 (unless queued)
   app.post('/api/sessions', validate(CreateSessionInputSchema), async (req, res) => {
     try {
-      const session = await sessionManager.createSession(req.body);
+      // Load project preferences if they exist, otherwise use defaults
+      const projectId = sessionManager.getProjectId(req.body.projectPath);
+      const savedPreferences = await storage.readJson<UserPreferences>(`${projectId}/preferences.json`);
+      const preferences = savedPreferences || DEFAULT_USER_PREFERENCES;
+
+      const session = await sessionManager.createSession(req.body, preferences);
 
       // Return response immediately
       res.status(201).json(session);

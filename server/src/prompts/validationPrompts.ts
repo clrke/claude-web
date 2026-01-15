@@ -1,5 +1,49 @@
-import type { Plan, Session } from '@claude-code-web/shared';
+import type { Plan, Session, UserPreferences } from '@claude-code-web/shared';
 import type { ParsedDecision } from '../services/OutputParser';
+
+/**
+ * Get human-readable description for risk comfort level
+ */
+function getRiskDescription(level: UserPreferences['riskComfort']): string {
+  switch (level) {
+    case 'low': return 'prefers conservative, well-tested approaches';
+    case 'medium': return 'balanced approach to risk';
+    case 'high': return 'comfortable with experimental approaches';
+  }
+}
+
+/**
+ * Get human-readable description for scope flexibility
+ */
+function getScopeDescription(level: UserPreferences['scopeFlexibility']): string {
+  switch (level) {
+    case 'fixed': return 'wants only what was explicitly requested';
+    case 'flexible': return 'open to minor improvements if clearly beneficial';
+    case 'open': return 'welcomes suggestions for improvements and polish';
+  }
+}
+
+/**
+ * Get human-readable description for detail level
+ */
+function getDetailDescription(level: UserPreferences['detailLevel']): string {
+  switch (level) {
+    case 'minimal': return 'only surface critical issues';
+    case 'standard': return 'surface important issues';
+    case 'detailed': return 'surface most issues for thoroughness';
+  }
+}
+
+/**
+ * Get human-readable description for autonomy level
+ */
+function getAutonomyDescription(level: UserPreferences['autonomyLevel']): string {
+  switch (level) {
+    case 'guided': return 'prefers to be consulted on most decisions';
+    case 'collaborative': return 'balanced between autonomy and consultation';
+    case 'autonomous': return 'prefers Claude to make reasonable decisions independently';
+  }
+}
 
 /**
  * Build validation prompt for Haiku to verify a decision against plan + codebase.
@@ -13,7 +57,8 @@ import type { ParsedDecision } from '../services/OutputParser';
  */
 export function buildDecisionValidationPrompt(
   decision: ParsedDecision,
-  plan: Plan
+  plan: Plan,
+  preferences?: UserPreferences
 ): string {
   const planStepsText = plan.steps.length > 0
     ? plan.steps.map((step, i) => {
@@ -33,11 +78,62 @@ export function buildDecisionValidationPrompt(
     ? `\nReferenced File: ${decision.file}${decision.line ? `:${decision.line}` : ''}`
     : '';
 
+  // Build preferences section if provided
+  const preferencesSection = preferences ? `
+## User Preferences
+- Risk Comfort: ${preferences.riskComfort} (${getRiskDescription(preferences.riskComfort)})
+- Speed vs Quality: ${preferences.speedVsQuality}
+- Scope Flexibility: ${preferences.scopeFlexibility} (${getScopeDescription(preferences.scopeFlexibility)})
+- Detail Level: ${preferences.detailLevel} (${getDetailDescription(preferences.detailLevel)})
+- Autonomy Level: ${preferences.autonomyLevel} (${getAutonomyDescription(preferences.autonomyLevel)})
+` : '';
+
+  // Build preference-based filtering rules if preferences provided
+  const preferenceRules = preferences ? `
+## Preference-Based Filtering Rules
+Apply these rules based on user preferences:
+
+**Scope Flexibility (${preferences.scopeFlexibility}):**
+${preferences.scopeFlexibility === 'fixed'
+    ? '- FILTER scope expansion questions unless they are critical to the core request\n- FILTER "nice to have" or "polish" suggestions\n- Only PASS scope questions that affect the explicit requirements'
+    : preferences.scopeFlexibility === 'flexible'
+    ? '- PASS scope questions if they provide clear benefit\n- FILTER minor polish suggestions unless low-effort\n- Use judgment on scope expansion questions'
+    : '- PASS scope expansion questions - user welcomes suggestions\n- PASS polish and improvement questions\n- Only FILTER if truly irrelevant to the work'}
+
+**Detail Level (${preferences.detailLevel}):**
+${preferences.detailLevel === 'minimal'
+    ? '- FILTER priority 3 (low priority) questions\n- Only PASS priority 1-2 questions\n- Keep questions focused on critical issues'
+    : preferences.detailLevel === 'standard'
+    ? '- PASS priority 1-2 questions\n- Use judgment on priority 3 questions based on relevance\n- Balance thoroughness with efficiency'
+    : '- PASS most questions across all priority levels\n- Only FILTER if clearly redundant or already addressed\n- User prefers thorough coverage'}
+
+**Risk Comfort (${preferences.riskComfort}):**
+${preferences.riskComfort === 'low'
+    ? '- PASS questions about risky trade-offs or experimental approaches\n- PASS questions about potential edge cases or failure modes\n- User prefers to be consulted on anything uncertain'
+    : preferences.riskComfort === 'medium'
+    ? '- Use judgment on risk-related questions\n- PASS for significant risks, FILTER for minor uncertainties'
+    : '- FILTER minor risk-related questions\n- Only PASS for major architectural risks\n- User is comfortable with experimental approaches'}
+
+**Autonomy Level (${preferences.autonomyLevel}):**
+${preferences.autonomyLevel === 'guided'
+    ? '- PASS most implementation detail questions\n- User prefers to be involved in decisions\n- Only FILTER clearly trivial choices'
+    : preferences.autonomyLevel === 'collaborative'
+    ? '- PASS significant implementation questions\n- FILTER minor implementation details Claude can decide\n- Balance user involvement with efficiency'
+    : '- FILTER minor implementation detail questions\n- Only PASS questions that significantly affect the outcome\n- User trusts Claude to make reasonable decisions'}
+
+**Speed vs Quality (${preferences.speedVsQuality}):**
+${preferences.speedVsQuality === 'speed'
+    ? '- FILTER questions about optimization, refactoring, or code cleanup\n- FILTER suggestions for additional testing beyond core functionality\n- PASS only questions critical to getting the feature working\n- User prioritizes delivery speed over polish'
+    : preferences.speedVsQuality === 'balanced'
+    ? '- Use judgment on optimization and cleanup questions\n- PASS questions about important quality considerations\n- FILTER purely cosmetic or over-engineering suggestions'
+    : '- PASS questions about code quality, testing, and best practices\n- PASS suggestions for refactoring or optimization\n- User values thoroughness and maintainability over speed'}
+` : '';
+
   return `Investigate this concern and determine how to handle it.
 
 ## Current Implementation Plan
 ${planStepsText}
-
+${preferencesSection}
 ## Concern Details
 Category: ${decision.category}
 Priority: ${decision.priority}${fileContext}
@@ -52,11 +148,12 @@ ${decision.options.map(o => `- ${o.label}${o.recommended ? ' (recommended)' : ''
 
 1. **Check the Plan**: Is this concern already addressed in a current or future plan step?
 2. **Check the Codebase** (if file is referenced): Read the file to see if solution exists
-3. **Decide the action**:
+3. **Consider User Preferences**: Apply preference-based filtering rules if provided
+4. **Decide the action**:
    - **pass**: Concern is valid and needs user input - pass through as-is
-   - **filter**: Concern is fully addressed in plan or code - remove entirely
+   - **filter**: Concern is fully addressed in plan/code OR filtered by user preferences
    - **repurpose**: Concern is semi-valid but question is wrong/incomplete - transform into better question(s)
-
+${preferenceRules}
 ## Response Format (JSON only)
 
 **If valid - pass through:**
@@ -64,6 +161,9 @@ ${decision.options.map(o => `- ${o.label}${o.recommended ? ' (recommended)' : ''
 
 **If fully addressed - filter out:**
 {"action": "filter", "reason": "Already in plan step X / Already implemented in Y"}
+
+**If filtered by preference - filter out:**
+{"action": "filter", "reason": "Filtered: [preference reason, e.g., 'low-priority question with minimal detail level']"}
 
 **If semi-valid - repurpose into better question(s):**
 {"action": "repurpose", "reason": "Why original question was incomplete", "questions": [
@@ -85,7 +185,7 @@ ${decision.options.map(o => `- ${o.label}${o.recommended ? ' (recommended)' : ''
 - The options provided don't capture the real choices
 
 ## Rules
-- Only use "filter" if you can CONFIRM the concern is fully addressed
+- Only use "filter" if you can CONFIRM the concern is fully addressed OR it matches preference-based filtering
 - Use "repurpose" when the underlying concern is valid but question needs refinement
 - When in doubt, use "pass" - it's better to ask than to miss an issue
 - Keep repurposed questions focused and actionable
