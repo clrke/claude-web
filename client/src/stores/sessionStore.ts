@@ -326,8 +326,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         throw new Error(data.error || 'Failed to retry session');
       }
 
-      // Refresh session data after retry
-      await get().fetchSession(session.projectId, session.featureId);
+      // Refresh session and conversations data after retry
+      await Promise.all([
+        get().fetchSession(session.projectId, session.featureId),
+        get().fetchConversations(session.projectId, session.featureId),
+      ]);
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : 'Failed to retry session',

@@ -1105,7 +1105,7 @@ ${step.description || 'No description provided.'}
 
 ${testNote}
 Commit when done. Output [STEP_COMPLETE id="${step.id}"] with summary.
-If blocked, use [DECISION_NEEDED category="blocker"].`;
+If blocked (e.g., a planning assumption discovered to be incorrect during implementation), use [DECISION_NEEDED category="blocker"].`;
 }
 
 /**
