@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Session, UserPreferences } from '@claude-code-web/shared';
-import { DEFAULT_USER_PREFERENCES } from '@claude-code-web/shared';
+import { DEFAULT_USER_PREFERENCES, generateProjectId, validatePreferences } from '@claude-code-web/shared';
 
 interface FormData {
   projectPath: string;
@@ -44,11 +44,12 @@ export default function NewSession() {
 
     setLoadingPreferences(true);
     try {
-      const projectId = btoa(projectPath).replace(/[/+=]/g, '_');
+      const projectId = await generateProjectId(projectPath);
       const response = await fetch(`/api/projects/${projectId}/preferences`);
       if (response.ok) {
         const data = await response.json();
-        setPreferences(data);
+        // Validate and sanitize loaded preferences, using defaults for invalid values
+        setPreferences(validatePreferences(data));
       } else {
         setPreferences({ ...DEFAULT_USER_PREFERENCES });
       }
@@ -121,12 +122,17 @@ export default function NewSession() {
     try {
       // Save preferences if checkbox is checked
       if (rememberPreferences && formData.projectPath.trim()) {
-        const projectId = btoa(formData.projectPath).replace(/[/+=]/g, '_');
-        await fetch(`/api/projects/${projectId}/preferences`, {
+        const projectId = await generateProjectId(formData.projectPath);
+        const prefResponse = await fetch(`/api/projects/${projectId}/preferences`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(preferences),
         });
+        if (!prefResponse.ok) {
+          console.warn('Failed to save preferences:', prefResponse.status);
+          // Don't block session creation, but show a warning
+          setError('Warning: Preferences could not be saved. Continuing with session creation...');
+        }
       }
 
       const response = await fetch('/api/sessions', {

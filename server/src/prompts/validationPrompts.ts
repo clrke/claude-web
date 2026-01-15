@@ -120,6 +120,13 @@ ${preferences.autonomyLevel === 'guided'
     : preferences.autonomyLevel === 'collaborative'
     ? '- PASS significant implementation questions\n- FILTER minor implementation details Claude can decide\n- Balance user involvement with efficiency'
     : '- FILTER minor implementation detail questions\n- Only PASS questions that significantly affect the outcome\n- User trusts Claude to make reasonable decisions'}
+
+**Speed vs Quality (${preferences.speedVsQuality}):**
+${preferences.speedVsQuality === 'speed'
+    ? '- FILTER questions about optimization, refactoring, or code cleanup\n- FILTER suggestions for additional testing beyond core functionality\n- PASS only questions critical to getting the feature working\n- User prioritizes delivery speed over polish'
+    : preferences.speedVsQuality === 'balanced'
+    ? '- Use judgment on optimization and cleanup questions\n- PASS questions about important quality considerations\n- FILTER purely cosmetic or over-engineering suggestions'
+    : '- PASS questions about code quality, testing, and best practices\n- PASS suggestions for refactoring or optimization\n- User values thoroughness and maintainability over speed'}
 ` : '';
 
   return `Investigate this concern and determine how to handle it.

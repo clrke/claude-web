@@ -34,9 +34,23 @@ describe('NewSession', () => {
   it('should submit form data to API', async () => {
     const user = userEvent.setup();
 
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/check-queue')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+        });
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({}),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+      });
     });
     global.fetch = fetchMock;
 
@@ -59,8 +73,28 @@ describe('NewSession', () => {
   it('should disable submit button while submitting', async () => {
     const user = userEvent.setup();
 
-    // Create a never-resolving promise to keep the button disabled
-    global.fetch = vi.fn().mockImplementation(() => new Promise(() => {}));
+    // Mock to return check-queue immediately, but never resolve session creation
+    let sessionCallCount = 0;
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/check-queue')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+        });
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+      }
+      // First session call (the actual POST) - never resolve
+      sessionCallCount++;
+      if (sessionCallCount === 1) {
+        return new Promise(() => {});
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+      });
+    });
 
     renderWithRouter(<NewSession />);
 
@@ -70,7 +104,9 @@ describe('NewSession', () => {
 
     await user.click(screen.getByRole('button', { name: /start discovery/i }));
 
-    expect(screen.getByRole('button', { name: /creating/i })).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /creating/i })).toBeDisabled();
+    });
   });
 
   it('should add and remove acceptance criteria', async () => {
@@ -183,6 +219,12 @@ describe('NewSession', () => {
     it('should load preferences when project path is entered', async () => {
       const user = userEvent.setup();
       const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+          });
+        }
         if (url.includes('/preferences')) {
           return Promise.resolve({
             ok: true,
@@ -197,7 +239,7 @@ describe('NewSession', () => {
         }
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+          json: () => Promise.resolve({}),
         });
       });
       global.fetch = fetchMock;
@@ -206,7 +248,7 @@ describe('NewSession', () => {
 
       await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
 
-      // Wait for debounced fetch
+      // Wait for debounced fetch (check-queue and preferences both get called)
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/preferences'));
       }, { timeout: 1000 });
@@ -223,21 +265,23 @@ describe('NewSession', () => {
     it('should save preferences on submit when checkbox is checked', async () => {
       const user = userEvent.setup();
       const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
-        if (url.includes('/preferences') && options?.method === 'PUT') {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
-        }
-        if (url.includes('/preferences')) {
-          return Promise.resolve({
-            ok: false,
-            json: () => Promise.resolve({}),
-          });
-        }
         if (url.includes('/check-queue')) {
           return Promise.resolve({
             ok: true,
             json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
           });
         }
+        if (url.includes('/preferences') && options?.method === 'PUT') {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+        }
+        if (url.includes('/preferences')) {
+          // GET preferences - return defaults
+          return Promise.resolve({
+            ok: false,
+            json: () => Promise.resolve({}),
+          });
+        }
+        // POST /api/sessions
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
@@ -255,11 +299,11 @@ describe('NewSession', () => {
 
       await waitFor(() => {
         // Should have called PUT to save preferences
-        expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringContaining('/preferences'),
-          expect.objectContaining({ method: 'PUT' })
+        const putCalls = (fetchMock.mock.calls as [string, RequestInit?][]).filter(
+          (call) => call[0].includes('/preferences') && call[1]?.method === 'PUT'
         );
-      });
+        expect(putCalls.length).toBeGreaterThan(0);
+      }, { timeout: 3000 });
     });
 
     it('should not save preferences on submit when checkbox is unchecked', async () => {
