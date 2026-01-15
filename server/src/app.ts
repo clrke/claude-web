@@ -990,7 +990,22 @@ async function executeSingleStep(
         }
 
         // Build retry context from the incomplete output
-        const retryContext = `Previous attempt did not complete successfully. Here's what happened:\n\n${result.output.slice(-1000)}\n\nPlease complete this step. Make sure to:\n1. Finish any incomplete work\n2. Run tests if applicable\n3. Commit your changes with "Step ${step.id}: <description>"`;
+        const retryContext = `## Auto-Retry: Previous attempt did not complete
+
+Your previous attempt for step [${step.id}] did not register as complete. Here's what happened:
+
+${result.output.slice(-1000)}
+
+**To complete this step, you MUST do ONE of these:**
+1. **Git commit** - Create a commit with message starting with "Step ${step.id}:" (auto-detected)
+2. **Output marker** - Output [STEP_COMPLETE id="${step.id}"] with a summary
+
+**Checklist:**
+- [ ] Implementation is finished
+- [ ] Tests pass (if applicable)
+- [ ] Changes are committed OR [STEP_COMPLETE] marker is output
+
+**If blocked:** Use [DECISION_NEEDED category="blocker" immediate="true"] to explain what's preventing progress.`;
 
         console.log(`Retrying step ${step.id} (attempt ${currentRetries + 2}) for ${session.featureId}`);
 
