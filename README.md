@@ -1595,12 +1595,13 @@ These files are likely to need changes:
 1. Enter plan mode using the EnterPlanMode tool. Output:
 [PLAN_MODE_ENTERED]
 
-2. Within plan mode, spawn domain-specific subagents for parallel codebase exploration:
-   - Frontend Agent: UI components, React patterns, styling
-   - Backend Agent: API endpoints, business logic, middleware
-   - Database Agent: Schema design, queries, data modeling
-   - DevOps Agent: CI/CD pipelines, deployment configs, infrastructure
-   - Test Agent: Test coverage, testing strategies
+2. Within plan mode, spawn exploration subagents in parallel:
+   - Architecture Agent: Project structure, tech stack, build commands
+   - Frontend Agent: UI patterns, components, state management
+   - Backend Agent: API patterns, middleware, error handling
+   - Database Agent: Schema patterns, query patterns, migrations
+   - Integration Agent: Frontend-backend boundaries, shared types
+   - Test Agent: Testing patterns, coverage approach
 
 3. Based on exploration, ask clarifying questions using progressive disclosure:
    - Start with the most fundamental questions (scope, approach, constraints)
@@ -1651,23 +1652,20 @@ This is review {{currentIteration}} of {{targetIterations}} recommended.
 
 ## Instructions
 1. Use the Task tool to spawn domain-specific subagents for parallel review.
-   IMPORTANT: Each subagent must first read the current plan above, then explore
-   the codebase to validate the plan against actual code structure.
+   Each agent checks correctness, security, and performance in their domain:
 
-   Spawn these subagents:
-   - Frontend Agent: Review UI-related steps against existing components
-   - Backend Agent: Review API-related steps against existing endpoints
-   - Database Agent: Review data-related steps against existing schema
-   - Test Agent: Review test coverage requirements
-   - Frontend-Backend Agent: Review API contracts and data flow between layers
-   - Backend-ThirdParty Agent: Review external service integrations
+   - Frontend Agent: Review UI steps (XSS, bundle size, render perf)
+   - Backend Agent: Review API steps (auth, injection, query efficiency)
+   - Database Agent: Review data steps (access controls, indexes, migrations)
+   - Integration Agent: Review contracts (type consistency, CORS, payloads)
+   - Test Agent: Review test strategy (coverage, edge cases)
 
 2. Check for issues in these categories:
-   - Code Quality: Missing error handling, hardcoded values, missing tests
-   - Architecture: Tight coupling, unclear separation of concerns
-   - Security: Injection risks, exposed secrets, missing auth checks
-   - Performance: N+1 queries, missing indexes, large bundle size
-   - Integration: API contract mismatches, missing error handling at boundaries
+   - Code Quality: Missing error handling, hardcoded values
+   - Architecture: Tight coupling, unclear separation
+   - Security: Injection risks, exposed secrets, missing auth
+   - Performance: N+1 queries, missing indexes, bundle size
+   - Plan Structure: Missing complexity ratings, unmapped acceptance criteria
 
 3. Present issues as progressive decisions for the user:
    - Priority 1: Fundamental issues (architecture, security) - ask first
@@ -1861,18 +1859,15 @@ Description: {{prDescription}}
 {{testResults}}
 
 ## Instructions
-1. Use the Task tool to spawn domain-specific subagents for parallel review.
-   IMPORTANT: Each subagent must first read the implementation plan and PR details above,
-   then explore the codebase to verify the implementation matches the plan.
+1. Use the Task tool to spawn review subagents in parallel.
+   Each agent checks correctness, security, and performance in their domain:
 
-   Spawn these subagents:
-   - Frontend Agent: Review UI changes against plan
-   - Backend Agent: Review API changes against plan
-   - Database Agent: Review schema changes against plan
-   - Test Agent: Review test coverage against plan requirements
-   - Frontend-Backend Agent: Review API contracts match between UI and backend
-   - Backend-ThirdParty Agent: Review external service integrations
-   - CI Agent: Poll CI status via `gh pr checks {{prNumber}} --watch`
+   - Frontend Agent: Review UI changes (XSS, bundle impact, re-renders)
+   - Backend Agent: Review API changes (auth, injection, N+1 queries)
+   - Database Agent: Review data changes (access controls, indexes)
+   - Integration Agent: Review contracts (type consistency, CORS, payloads)
+   - Test Agent: Verify test coverage for changes
+   - CI Agent: Wait for CI via `gh pr checks {{prNumber}} --watch`
 
 2. Review for:
    - Plan Alignment: Does the code implement what the plan specified?
@@ -2139,53 +2134,27 @@ flowchart LR
 
 Claude Code has built-in subagent support via the Task tool. This section defines **prompt guidance** for instructing Claude Code on what subagents to spawn during different workflow stages.
 
-### Domain Agents
+### Unified Domain Agents
 
-When prompting Claude Code, instruct it to spawn these specialized subagents:
+The same domain agents are used across stages with stage-appropriate focus. Each agent checks **correctness, security, and performance** within their domain.
 
-| Agent | Expertise | When to Spawn |
-|-------|-----------|---------------|
-| **Frontend Agent** | React, TypeScript, CSS, UI/UX | UI exploration, component analysis, styling review |
-| **Backend Agent** | Node.js, Express, APIs | API exploration, endpoint analysis, middleware review |
-| **Database Agent** | SQL, ORMs, migrations | Schema analysis, query review, migration planning |
-| **DevOps Agent** | CI/CD, Docker, infra | Pipeline review, deployment analysis, config checks |
-| **Test Agent** | Jest, Playwright, testing patterns | Test coverage analysis, test strategy review |
-| **CI Agent** | GitHub Actions, CI status | Poll CI status, wait for checks to complete (Stage 5 only) |
-| **Frontend-Backend Agent** | API contracts, data flow, request/response shapes | Review integration between UI and API layers |
-| **Backend-ThirdParty Agent** | External APIs, SDKs, webhooks, OAuth | Review integrations with external services and APIs |
+| Agent | Stage 1 (Explore) | Stage 2 (Review Plan) | Stage 5 (Review PR) |
+|-------|-------------------|----------------------|---------------------|
+| **Architecture** | Project structure, tech stack | - | - |
+| **Frontend** | UI patterns, components | Review UI steps | Review UI changes |
+| **Backend** | API patterns, middleware | Review API steps | Review API changes |
+| **Database** | Schema, query patterns | Review data steps | Review data changes |
+| **Integration** | Frontend-backend boundaries | Review contracts | Review contracts |
+| **Test** | Testing patterns, coverage | Review test strategy | Verify test coverage |
+| **CI** | - | - | Wait for CI status |
 
-### Usage by Workflow Stage
+#### Stage 4: PR Creation Agents (Task-Specific)
 
-| Stage | Subagent Usage |
-|-------|----------------|
-| **Discovery** | Spawn agents in parallel to explore codebase from different domain perspectives |
-| **Plan Review** | Each agent reviews plan for issues in their domain |
-| **Implementation** | Main Claude implements; spawns agents for read-only guidance when needed |
-| **PR Creation** | Spawn agents to review changes before PR |
-| **PR Review** | Domain agents review changes from their specialty lens |
-| **After /compact** | Re-explore relevant files to restore context for current stage |
-
-### Prompt Template
-
-The web app includes this guidance in prompts to Claude Code:
-
-```
-When exploring or reviewing, use the Task tool to spawn domain-specific
-subagents for parallel analysis:
-- Frontend Agent: UI components, React patterns, styling
-- Backend Agent: API endpoints, business logic, middleware
-- Database Agent: Schema design, queries, data modeling
-- DevOps Agent: CI/CD, deployment, infrastructure
-- Test Agent: Test coverage, testing strategies
-- Frontend-Backend Agent: API contracts, data flow between UI and backend
-- Backend-ThirdParty Agent: External API integrations, SDKs, webhooks
-
-IMPORTANT: Each subagent must first read the current plan (if available),
-then explore the codebase to validate plan against actual code structure.
-
-Subagents should focus on read-only exploration and analysis.
-Implementation is handled by the main Claude instance.
-```
+| Agent | Purpose | Output |
+|-------|---------|--------|
+| **Diff Analysis Agent** | Review git diff for changes | Summary of additions, modifications, deletions |
+| **Commit History Agent** | Review commit progression | Summary of commit structure |
+| **Test Results Agent** | Review test status | Test coverage summary, untested areas |
 
 ### Subagent Failure Handling
 

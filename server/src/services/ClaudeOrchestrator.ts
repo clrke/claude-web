@@ -231,8 +231,17 @@ export class ClaudeOrchestrator {
     });
   }
 
+  /**
+   * Check if streaming mode is enabled via environment variable.
+   * Streaming mode uses stream-json format for real-time output visibility.
+   */
+  private isStreamingEnabled(): boolean {
+    return process.env.CLAUDE_STREAMING === 'true';
+  }
+
   buildCommand(options: SpawnOptions): ClaudeCommand {
-    const args: string[] = ['--print', '--output-format', 'json'];
+    const useStreaming = this.isStreamingEnabled();
+    const args: string[] = ['--print', '--output-format', useStreaming ? 'stream-json' : 'json'];
 
     if (options.sessionId) {
       args.push('--resume', options.sessionId);
@@ -255,9 +264,54 @@ export class ClaudeOrchestrator {
     };
   }
 
+  /**
+   * Parse streaming JSON event and extract readable content.
+   * Stream-json format produces newline-delimited JSON events.
+   */
+  private parseStreamEvent(line: string): { type: string; content?: string; result?: ClaudeJsonOutput } | null {
+    try {
+      const event = JSON.parse(line);
+
+      // Handle result event (contains final output)
+      if (event.type === 'result') {
+        return {
+          type: 'result',
+          result: {
+            result: event.result || '',
+            session_id: event.session_id,
+            cost_usd: event.cost_usd,
+            is_error: event.is_error || false,
+            error: event.error,
+          },
+        };
+      }
+
+      // Handle text delta (streaming text content)
+      if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+        return { type: 'text', content: event.delta.text };
+      }
+
+      // Handle assistant message with text content
+      if (event.type === 'assistant' && event.message?.content) {
+        const textContent = event.message.content
+          .filter((c: { type: string }) => c.type === 'text')
+          .map((c: { text: string }) => c.text)
+          .join('');
+        if (textContent) {
+          return { type: 'text', content: textContent };
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   async spawn(options: SpawnOptions): Promise<ClaudeResult> {
     const cmd = this.buildCommand(options);
     const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
+    const useStreaming = this.isStreamingEnabled();
 
     return new Promise((resolve, reject) => {
       const childProcess = spawn(cmd.command, cmd.args, {
@@ -269,6 +323,9 @@ export class ClaudeOrchestrator {
       let stdout = '';
       let stderr = '';
       let timeoutId: NodeJS.Timeout | null = null;
+      let streamBuffer = '';
+      let streamedContent = ''; // Collect all streamed text for final result
+      let finalResult: ClaudeJsonOutput | null = null;
 
       // Set timeout
       timeoutId = setTimeout(() => {
@@ -279,9 +336,30 @@ export class ClaudeOrchestrator {
       childProcess.stdout.on('data', (data: Buffer) => {
         const chunk = data.toString();
         stdout += chunk;
-        // Note: With --output-format json, we get all output at the end
-        // The callback is called with each chunk but content isn't usable until complete
-        options.onOutput?.(chunk, false);
+
+        if (useStreaming) {
+          // Parse streaming events and extract readable content
+          streamBuffer += chunk;
+          const lines = streamBuffer.split('\n');
+          streamBuffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const parsed = this.parseStreamEvent(line);
+            if (parsed) {
+              if (parsed.type === 'text' && parsed.content) {
+                streamedContent += parsed.content;
+                options.onOutput?.(parsed.content, false);
+              } else if (parsed.type === 'result' && parsed.result) {
+                finalResult = parsed.result;
+              }
+            }
+          }
+        } else {
+          // Non-streaming mode: just accumulate chunks
+          // Note: With --output-format json, we get all output at the end
+          options.onOutput?.(chunk, false);
+        }
       });
 
       childProcess.stderr.on('data', (data: Buffer) => {
@@ -294,21 +372,40 @@ export class ClaudeOrchestrator {
         }
 
         try {
-          const jsonOutput: ClaudeJsonOutput = JSON.parse(stdout);
-          const parsed = this.outputParser.parse(jsonOutput.result || '');
+          let result: string;
+          let sessionId: string | null = null;
+          let costUsd = 0;
+          let isError = false;
+          let error: string | undefined;
 
-          // Check both JSON is_error flag AND exit code
-          const hasError = jsonOutput.is_error || (code !== null && code !== 0);
+          if (useStreaming && finalResult) {
+            // Use result from stream-json format
+            result = finalResult.result || streamedContent;
+            sessionId = finalResult.session_id || null;
+            costUsd = finalResult.cost_usd || 0;
+            isError = finalResult.is_error || (code !== null && code !== 0);
+            error = finalResult.error;
+          } else {
+            // Parse regular JSON output
+            const jsonOutput: ClaudeJsonOutput = JSON.parse(stdout);
+            result = jsonOutput.result || '';
+            sessionId = jsonOutput.session_id || null;
+            costUsd = jsonOutput.cost_usd || 0;
+            isError = jsonOutput.is_error || (code !== null && code !== 0);
+            error = jsonOutput.error;
+          }
+
+          const parsed = this.outputParser.parse(result);
 
           // Broadcast final output with isComplete=true
-          options.onOutput?.(jsonOutput.result || '', true);
+          options.onOutput?.(result, true);
 
           resolve({
-            output: jsonOutput.result || '',
-            sessionId: jsonOutput.session_id || null,
-            costUsd: jsonOutput.cost_usd || 0,
-            isError: hasError,
-            error: jsonOutput.error || (hasError && stderr ? stderr.trim() : undefined),
+            output: result,
+            sessionId,
+            costUsd,
+            isError,
+            error: error || (isError && stderr ? stderr.trim() : undefined),
             parsed,
           });
         } catch (parseError) {

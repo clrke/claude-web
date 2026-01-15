@@ -32,9 +32,11 @@ export function buildStage1Prompt(session: Session): string {
   // Sanitize user-provided fields to prevent marker injection
   const sanitized = sanitizeSessionFields(session);
 
-  const acceptanceCriteriaText = sanitized.acceptanceCriteria.length > 0
-    ? sanitized.acceptanceCriteria.map((c, i) => `${i + 1}. ${c.text}`).join('\n')
-    : 'No specific criteria provided.';
+  const acceptanceCriteriaSection = sanitized.acceptanceCriteria.length > 0
+    ? `
+## Acceptance Criteria
+${sanitized.acceptanceCriteria.map((c, i) => `${i + 1}. ${c.text}`).join('\n')}`
+    : '';
 
   const affectedFilesSection = sanitized.affectedFiles.length > 0
     ? `
@@ -55,28 +57,41 @@ ${sanitized.technicalNotes}`
 Title: ${sanitized.title}
 Description: ${sanitized.featureDescription}
 Project Path: ${session.projectPath}
-
-## Acceptance Criteria
-${acceptanceCriteriaText}
-${affectedFilesSection}
-${technicalNotesSection}
+${acceptanceCriteriaSection}${affectedFilesSection}${technicalNotesSection}
 
 ## Instructions
 
 ### Phase 1: Codebase Exploration (MANDATORY - Do this FIRST)
 You MUST explore the codebase before asking any questions. Use the Task tool to spawn parallel exploration agents:
 
-1. **Architecture Agent**: Find project structure, entry points, main modules
-   - Look for: package.json, tsconfig.json, main entry files
-   - Understand: Build system, dependencies, module organization
+1. **Architecture Agent**: Quick overview of project structure.
+   - Find: package.json, config files (tsconfig/vite/webpack), main entry points
+   - Output: Tech stack, monorepo structure (if any), build commands
 
-2. **Existing Patterns Agent**: Find similar features already implemented
-   - Search for: Related functionality, coding patterns, conventions
-   - Note: How similar problems were solved, reusable utilities
+2. **Frontend Agent**: Explore UI layer patterns.
+   - Find: Components related to this feature, state management, styling approach
+   - Check: Existing patterns for similar UI, reusable components, routing
+   - Output: Relevant UI files, patterns to follow, potential reuse
 
-3. **Integration Points Agent**: Find where the new feature connects
-   - Identify: API routes, database schemas, UI components to modify
-   - Map: Dependencies and data flow
+3. **Backend Agent**: Explore API/server layer patterns.
+   - Find: Related API routes, controllers, middleware, business logic
+   - Check: Auth patterns, error handling, validation approach
+   - Output: Relevant API files, patterns to follow, potential reuse
+
+4. **Database Agent**: Explore data layer patterns.
+   - Find: Related models/schemas, migrations, query patterns
+   - Check: ORM usage, relationships, indexing patterns
+   - Output: Relevant data files, schema patterns to follow
+
+5. **Integration Agent**: Explore frontend-backend boundaries.
+   - Find: API client code, type definitions shared between layers
+   - Check: How data flows between UI and API, contract patterns
+   - Output: Integration patterns, shared types, potential contract issues
+
+6. **Test Agent**: Explore testing patterns.
+   - Find: Test files for similar features, test utilities, mocks
+   - Check: Testing framework, coverage patterns, test organization
+   - Output: Test patterns to follow, testing requirements
 
 Wait for ALL exploration agents to complete before proceeding.
 
@@ -291,10 +306,35 @@ This is review ${currentIteration} of ${targetIterations} recommended.
 ${composablePlanDocs}
 ## Instructions
 1. Use the Task tool to spawn domain-specific subagents for parallel review:
-   - Frontend Agent: Review UI-related steps
-   - Backend Agent: Review API-related steps
-   - Database Agent: Review data-related steps
-   - Test Agent: Review test coverage
+
+   - **Frontend Agent**: Review UI/client-side steps.
+     - Correctness: Component structure, state management, error states
+     - Security: XSS risks, sensitive data exposure, input sanitization
+     - Performance: Bundle size, render optimization, lazy loading
+     - Output: List of UI concerns with severity (critical/major/minor)
+
+   - **Backend Agent**: Review API/server-side steps.
+     - Correctness: Endpoint design, request/response contracts, error handling
+     - Security: Auth checks, injection risks, input validation
+     - Performance: Query efficiency, caching strategy, rate limiting
+     - Output: List of backend concerns with severity
+
+   - **Database Agent**: Review data layer steps.
+     - Correctness: Schema design, migration strategy, relationships
+     - Security: Access controls, sensitive data handling, SQL injection
+     - Performance: Index usage, query patterns, connection pooling
+     - Output: List of data concerns with severity
+
+   - **Integration Agent**: Review frontend-backend boundaries.
+     - Correctness: API contracts match, type consistency across layers
+     - Security: Auth token handling, CORS configuration, error exposure
+     - Performance: Payload sizes, request batching, caching headers
+     - Output: List of integration concerns with severity
+
+   - **Test Agent**: Review testing strategy.
+     - Coverage: Unit, integration, e2e tests planned appropriately
+     - Critical paths: Happy paths, error cases, edge cases identified
+     - Output: List of testing gaps with severity
 
 2. Check for issues in these categories:
    - Code Quality: Missing error handling, hardcoded values, missing tests
@@ -887,26 +927,41 @@ URL: ${prInfo.url}
 ### Phase 1: Parallel Review (MANDATORY)
 Use the Task tool to spawn review agents in parallel:
 
-1. **Code Review Agent**: Review the git diff for issues
-   - Run: git diff main...HEAD
-   - Check: correctness, edge cases, error handling
+1. **Frontend Agent**: Review UI/client-side changes.
+   - Run: git diff main...HEAD -- '*.tsx' '*.ts' '*.css' (client paths)
+   - Correctness: Component logic, state handling, error states
+   - Security: XSS risks, sensitive data in client, input sanitization
+   - Performance: Bundle impact, render efficiency, unnecessary re-renders
+   - Output: List of UI issues with file:line refs and severity
 
-2. **Security Agent**: Check for security vulnerabilities
-   - Look for: injection risks, exposed secrets, auth issues
-   - Verify: input validation, output encoding
+2. **Backend Agent**: Review API/server-side changes.
+   - Run: git diff main...HEAD -- (server paths)
+   - Correctness: Endpoint logic, error handling, edge cases
+   - Security: Auth checks, injection risks, input validation, secrets
+   - Performance: Query efficiency, N+1 issues, caching
+   - Output: List of backend issues with file:line refs and severity
 
-3. **Test Coverage Agent**: Verify test adequacy
-   - Check: test files exist for new code
-   - Verify: edge cases and error paths tested
+3. **Database Agent**: Review data layer changes.
+   - Run: git diff main...HEAD -- (schema/migration paths)
+   - Correctness: Schema design, migration safety, relationships
+   - Security: Access controls, sensitive data handling
+   - Performance: Index usage, query patterns
+   - Output: List of data issues with file:line refs and severity
 
-4. **Integration Agent**: Check API contracts
-   - Verify: frontend-backend data shapes match
-   - Check: external API integrations
+4. **Integration Agent**: Review frontend-backend boundaries.
+   - Check: API contracts match, types consistent across layers
+   - Security: Auth token handling, CORS, error message exposure
+   - Performance: Payload sizes, request patterns
+   - Output: List of integration issues with severity
 
-5. **CI Agent**: Poll CI status
-   - Run: gh pr checks (get PR number from URL)
-   - Wait for checks to complete
-   - Report pass/fail status
+5. **Test Agent**: Verify test coverage for changes.
+   - Run: Find test files matching changed source files
+   - Check: New code has tests, edge cases covered
+   - Output: List of untested code paths with file:line refs
+
+6. **CI Agent**: Wait for CI to complete.
+   - Run: gh pr checks ${prInfo.url.split('/').pop()} --watch
+   - Output: Final status (all passing / X failing)
 
 Wait for ALL agents to complete before proceeding.
 

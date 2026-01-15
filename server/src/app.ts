@@ -1,4 +1,5 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
+import path from 'path';
 import crypto from 'crypto';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
@@ -1692,6 +1693,10 @@ export function createApp(
   // Middleware
   app.use(express.json());
 
+  // Serve built frontend static files
+  const clientDistPath = path.join(__dirname, '../../client/dist');
+  app.use(express.static(clientDistPath));
+
   // Health check endpoint (README lines 651-667)
   app.get('/health', async (_req, res) => {
     const uptime = Math.floor((Date.now() - startTime) / 1000);
@@ -2952,6 +2957,137 @@ After creating all steps, write the plan to a file and output:
     }
   });
 
+  // Retry current stage (for stuck sessions)
+  app.post('/api/sessions/:projectId/:featureId/retry', async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+
+      // Get session
+      const session = await sessionManager.getSession(projectId, featureId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      const sessionDir = `${projectId}/${featureId}`;
+      const stage = session.currentStage;
+
+      // Clear stuck conversation entry (status = "started" with no output)
+      const conversationsPath = `${sessionDir}/conversations.json`;
+      const conversationsData = await storage.readJson<{ entries: Array<{ stage: number; status?: string; output?: string }> }>(conversationsPath);
+      if (conversationsData) {
+        // Remove stuck entries for current stage
+        conversationsData.entries = conversationsData.entries.filter(
+          entry => !(entry.stage === stage && entry.status === 'started' && (!entry.output || entry.output === ''))
+        );
+        await storage.writeJson(conversationsPath, conversationsData);
+      }
+
+      // Return success immediately
+      res.json({ message: `Stage ${stage} retry started`, stage });
+
+      // Restart the current stage based on which stage we're in
+      switch (stage) {
+        case 1: {
+          // Stage 1: Discovery
+          const prompt = buildStage1Prompt(session);
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage1_retry');
+          await resultHandler.saveConversationStart(sessionDir, 1, prompt);
+
+          orchestrator.spawn({
+            prompt,
+            projectPath: session.projectPath,
+            allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+            onOutput: (output, isComplete) => {
+              eventBroadcaster?.claudeOutput(projectId, featureId, output, isComplete);
+            },
+          }).then(async (result) => {
+            await resultHandler.handleStage1Result(session, result, prompt);
+            await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
+            if (!result.isError) {
+              await handleStage1Completion(session, result, storage, sessionManager, resultHandler, eventBroadcaster);
+            }
+            console.log(`Stage 1 retry ${result.isError ? 'failed' : 'completed'} for ${featureId}`);
+            eventBroadcaster?.executionStatus(projectId, featureId, result.isError ? 'error' : 'idle', 'stage1_complete');
+          }).catch((error) => {
+            console.error(`Stage 1 retry spawn error for ${featureId}:`, error);
+            eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'stage1_retry_error');
+          });
+          break;
+        }
+
+        case 2: {
+          // Stage 2: Plan Review
+          const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+          if (!plan) {
+            console.error(`No plan found for Stage 2 retry: ${featureId}`);
+            return;
+          }
+          const stage2Prompt = buildStage2Prompt(session, plan, 1);
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage2_retry');
+          spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, stage2Prompt);
+          break;
+        }
+
+        case 3: {
+          // Stage 3: Implementation
+          const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+          if (!plan || !plan.isApproved) {
+            console.error(`No approved plan found for Stage 3 retry: ${featureId}`);
+            return;
+          }
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage3_retry');
+          executeStage3Steps(session, storage, sessionManager, resultHandler, eventBroadcaster)
+            .catch(err => {
+              console.error(`Stage 3 retry error: ${err}`);
+              eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'stage3_retry_error');
+            });
+          break;
+        }
+
+        case 4: {
+          // Stage 4: PR Creation
+          const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+          if (!plan) {
+            console.error(`No plan found for Stage 4 retry: ${featureId}`);
+            return;
+          }
+          const stage4Prompt = buildStage4Prompt(session, plan);
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage4_retry');
+          spawnStage4PRCreation(session, storage, sessionManager, resultHandler, eventBroadcaster, stage4Prompt);
+          break;
+        }
+
+        case 5: {
+          // Stage 5: PR Review
+          if (!session.prUrl) {
+            console.error(`No PR URL found for Stage 5 retry: ${featureId}`);
+            return;
+          }
+          const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+          if (!plan) {
+            console.error(`No plan found for Stage 5 retry: ${featureId}`);
+            return;
+          }
+          const prInfo = {
+            title: session.title,
+            url: session.prUrl,
+            branch: session.featureBranch,
+          };
+          const stage5Prompt = buildStage5Prompt(session, plan, prInfo);
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage5_retry');
+          spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
+          break;
+        }
+
+        default:
+          console.error(`Unknown stage ${stage} for retry: ${featureId}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to retry stage';
+      res.status(500).json({ error: message });
+    }
+  });
+
   // Request re-review with optional remarks (Stage 5)
   app.post('/api/sessions/:projectId/:featureId/re-review', async (req, res) => {
     try {
@@ -3112,6 +3248,19 @@ After creating all steps, write the plan to a file and output:
       console.error('Error scanning for stuck sessions:', error);
     }
   }
+
+  // SPA fallback: serve index.html for non-API routes
+  app.get('*', (req, res, next) => {
+    // Skip API routes (shouldn't reach here but be safe)
+    if (req.path.startsWith('/api')) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    // Skip if headers already sent (prevents crash)
+    if (res.headersSent) {
+      return next();
+    }
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  });
 
   return { app, resumeStuckSessions };
 }
