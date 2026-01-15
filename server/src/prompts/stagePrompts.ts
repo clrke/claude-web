@@ -66,17 +66,20 @@ ${technicalNotesSection}
 ### Phase 1: Codebase Exploration (MANDATORY - Do this FIRST)
 You MUST explore the codebase before asking any questions. Use the Task tool to spawn parallel exploration agents:
 
-1. **Architecture Agent**: Find project structure, entry points, main modules
-   - Look for: package.json, tsconfig.json, main entry files
-   - Understand: Build system, dependencies, module organization
+1. **Architecture Agent**: Map the project structure and technology stack.
+   - Find: package.json (dependencies), tsconfig/vite/webpack config (build setup), main entry files
+   - Identify: Monorepo structure, module boundaries, shared packages
+   - Output: List of key directories, frameworks used, build commands
 
-2. **Existing Patterns Agent**: Find similar features already implemented
-   - Search for: Related functionality, coding patterns, conventions
-   - Note: How similar problems were solved, reusable utilities
+2. **Existing Patterns Agent**: Find how similar features are implemented.
+   - Search for: Components/functions with related names, existing CRUD operations, similar UI patterns
+   - Identify: Naming conventions, file organization patterns, shared utilities
+   - Output: List of relevant existing files with brief descriptions of patterns to follow
 
-3. **Integration Points Agent**: Find where the new feature connects
-   - Identify: API routes, database schemas, UI components to modify
-   - Map: Dependencies and data flow
+3. **Integration Points Agent**: Identify where the new feature connects to existing code.
+   - Find: API routes (grep for router/app.get/post), database models/schemas, UI entry points
+   - Map: Which existing modules need modification vs new modules to create
+   - Output: List of files to modify and new files to create
 
 Wait for ALL exploration agents to complete before proceeding.
 
@@ -291,10 +294,26 @@ This is review ${currentIteration} of ${targetIterations} recommended.
 ${composablePlanDocs}
 ## Instructions
 1. Use the Task tool to spawn domain-specific subagents for parallel review:
-   - Frontend Agent: Review UI-related steps
-   - Backend Agent: Review API-related steps
-   - Database Agent: Review data-related steps
-   - Test Agent: Review test coverage
+
+   - **Frontend Agent**: Review UI/client-side steps for completeness.
+     - Check: Component structure, state management approach, styling strategy
+     - Verify: Accessibility considerations, responsive design, error states
+     - Output: List of UI concerns with severity (critical/major/minor)
+
+   - **Backend Agent**: Review API/server-side steps for correctness.
+     - Check: Endpoint design, request/response contracts, middleware usage
+     - Verify: Error handling strategy, logging approach, API versioning
+     - Output: List of backend concerns with severity
+
+   - **Database Agent**: Review data layer steps for safety.
+     - Check: Schema changes, migration strategy, query patterns
+     - Verify: Index usage, foreign key constraints, data validation
+     - Output: List of data concerns with severity
+
+   - **Test Agent**: Review testing strategy for adequacy.
+     - Check: Test types planned (unit/integration/e2e), coverage targets
+     - Verify: Critical paths identified, edge cases considered
+     - Output: List of testing gaps with severity
 
 2. Check for issues in these categories:
    - Code Quality: Missing error handling, hardcoded values, missing tests
@@ -887,26 +906,34 @@ URL: ${prInfo.url}
 ### Phase 1: Parallel Review (MANDATORY)
 Use the Task tool to spawn review agents in parallel:
 
-1. **Code Review Agent**: Review the git diff for issues
+1. **Code Review Agent**: Find bugs and logic errors in the diff.
    - Run: git diff main...HEAD
-   - Check: correctness, edge cases, error handling
+   - Check: Off-by-one errors, null checks, boundary conditions, race conditions
+   - Verify: Error messages are helpful, logging is appropriate
+   - Output: List of issues with file:line references and severity
 
-2. **Security Agent**: Check for security vulnerabilities
-   - Look for: injection risks, exposed secrets, auth issues
-   - Verify: input validation, output encoding
+2. **Security Agent**: Find security vulnerabilities in the diff.
+   - Run: git diff main...HEAD (focus on user input handling)
+   - Check: SQL/NoSQL injection, XSS, command injection, path traversal
+   - Verify: Auth checks on new endpoints, secrets not hardcoded, CORS configured
+   - Output: List of security issues with OWASP category and severity
 
-3. **Test Coverage Agent**: Verify test adequacy
-   - Check: test files exist for new code
-   - Verify: edge cases and error paths tested
+3. **Test Coverage Agent**: Verify new code has adequate tests.
+   - Run: Find test files matching changed source files
+   - Check: New functions have corresponding test cases
+   - Verify: Happy path, error cases, and edge cases are tested
+   - Output: List of untested code paths with file:line references
 
-4. **Integration Agent**: Check API contracts
-   - Verify: frontend-backend data shapes match
-   - Check: external API integrations
+4. **Integration Agent**: Verify API contracts match between layers.
+   - Check: TypeScript types/interfaces are consistent across client and server
+   - Verify: Request payloads match API expectations, response shapes are correct
+   - Run: grep for type definitions in changed files
+   - Output: List of contract mismatches with expected vs actual
 
-5. **CI Agent**: Poll CI status
-   - Run: gh pr checks (get PR number from URL)
-   - Wait for checks to complete
-   - Report pass/fail status
+5. **CI Agent**: Get current CI status.
+   - Run: gh pr checks ${prInfo.url.split('/').pop()}
+   - Report: Each check name with pass/fail/pending status
+   - Output: Summary with overall status (all passing / X failing / Y pending)
 
 Wait for ALL agents to complete before proceeding.
 
