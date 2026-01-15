@@ -1,4 +1,5 @@
 export type SessionStatus =
+  | 'queued'           // Waiting for another session to complete
   | 'discovery'        // Stage 1: Feature discovery
   | 'planning'         // Stage 2: Plan review
   | 'implementing'     // Stage 3: Implementation
@@ -52,6 +53,10 @@ export interface Session {
   planValidationContext?: string | null;
   /** Number of plan validation attempts in current Stage 2 session */
   planValidationAttempts?: number;
+  /** Queue position when status is 'queued' (1 = next in line) */
+  queuePosition?: number | null;
+  /** Timestamp when session was queued */
+  queuedAt?: string | null;
 }
 
 export interface SessionRuntimeStatus {

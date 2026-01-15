@@ -362,12 +362,24 @@ export default function SessionView() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
           </Link>
-          <StageStatusBadge
-            stage={currentStage}
-            action={executionStatus?.action}
-            subState={executionStatus?.subState}
-            status={executionStatus?.status ?? 'idle'}
-          />
+          {session.status === 'queued' ? (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-yellow-600/20 text-yellow-300 border-yellow-500/30">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="font-medium">Queued</span>
+              {session.queuePosition && (
+                <span className="text-sm opacity-80">#{session.queuePosition} in queue</span>
+              )}
+            </div>
+          ) : (
+            <StageStatusBadge
+              stage={currentStage}
+              action={executionStatus?.action}
+              subState={executionStatus?.subState}
+              status={executionStatus?.status ?? 'idle'}
+            />
+          )}
           {/* Retry button - show when session appears stuck */}
           <RetryButton
             executionStatus={executionStatus}
@@ -411,6 +423,33 @@ export default function SessionView() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-6">
+          {/* Queued Session - waiting for active session to complete */}
+          {session.status === 'queued' && (
+            <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-6">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-yellow-600/30 rounded-full">
+                  <svg className="w-6 h-6 text-yellow-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-yellow-200 text-lg">Session Queued</h3>
+                  <p className="text-yellow-300/80 mt-1">
+                    This session is waiting for another session to complete on this project.
+                    {session.queuePosition && (
+                      <span className="block mt-1">
+                        Position in queue: <span className="font-medium">#{session.queuePosition}</span>
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-yellow-300/60 text-sm mt-3">
+                    Discovery will start automatically when the current session completes.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Unanswered Questions - show in any stage */}
           {unansweredQuestions.length > 0 && (
             <QuestionsSection questions={unansweredQuestions} stage={currentStage} />
