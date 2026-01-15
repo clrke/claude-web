@@ -3364,8 +3364,46 @@ After creating all steps, write the plan to a file and output:
             console.error(`No approved plan found for Stage 3 retry: ${featureId}`);
             return;
           }
+
+          // Get current step and track manual retry count
+          const statusForRetry = await storage.readJson<Record<string, unknown>>(`${sessionDir}/status.json`);
+          const currentStepId = statusForRetry?.currentStepId as string | null;
+          const manualRetries = ((statusForRetry?.manualRetries as Record<string, number>) || {});
+          const stepRetryCount = currentStepId ? (manualRetries[currentStepId] || 0) + 1 : 1;
+
+          // Update manual retry count
+          if (currentStepId && statusForRetry) {
+            manualRetries[currentStepId] = stepRetryCount;
+            statusForRetry.manualRetries = manualRetries;
+            await storage.writeJson(`${sessionDir}/status.json`, statusForRetry);
+          }
+
+          // Build retry context to inform Claude about the failure
+          const currentStep = currentStepId ? plan.steps.find(s => s.id === currentStepId) : null;
+          const retryContext = currentStep
+            ? `## Manual Retry (Attempt ${stepRetryCount + 1})
+
+The user manually retried because your previous attempt to complete step [${currentStep.id}] "${currentStep.title}" did not succeed.
+
+**What went wrong:** Your previous attempt either:
+- Did not output a [STEP_COMPLETE] marker
+- Did not create a git commit for the step
+- Encountered an error that prevented completion
+
+**Important:** Please ensure you:
+1. Complete the implementation for this step
+2. Run any necessary tests
+3. Create a git commit with message "Step ${currentStep.id}: ${currentStep.title}"
+4. Output [STEP_COMPLETE id="${currentStep.id}"] with a summary
+
+If you're blocked and cannot complete this step, use [DECISION_NEEDED category="blocker"] to explain what's preventing progress.`
+            : `## Manual Retry
+
+The user manually retried this stage because the previous attempt did not complete successfully.
+Please ensure you output proper completion markers when done.`;
+
           eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage3_retry', { stage: 3, subState: 'spawning_agent' });
-          executeStage3Steps(session, storage, sessionManager, resultHandler, eventBroadcaster)
+          executeStage3Steps(session, storage, sessionManager, resultHandler, eventBroadcaster, currentStepId || undefined, retryContext)
             .catch(err => {
               console.error(`Stage 3 retry error: ${err}`);
               eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'stage3_retry_error', { stage: 3 });
