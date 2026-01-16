@@ -939,5 +939,249 @@ describe('SessionManager', () => {
         expect(updatedThird!.queuePosition).toBe(1); // Was 2, now 1
       });
     });
+
+    describe('reorderQueuedSessions', () => {
+      it('should reorder queued sessions according to provided order', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        // Create queued sessions
+        const second = await manager.createSession({
+          title: 'Second Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const third = await manager.createSession({
+          title: 'Third Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const fourth = await manager.createSession({
+          title: 'Fourth Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        // Initial positions: second=1, third=2, fourth=3
+        expect(second.queuePosition).toBe(1);
+        expect(third.queuePosition).toBe(2);
+        expect(fourth.queuePosition).toBe(3);
+
+        const projectId = manager.getProjectId(projectPath);
+
+        // Reorder: fourth, second, third
+        const reordered = await manager.reorderQueuedSessions(projectId, [
+          fourth.featureId,
+          second.featureId,
+          third.featureId,
+        ]);
+
+        expect(reordered).toHaveLength(3);
+        expect(reordered[0].featureId).toBe(fourth.featureId);
+        expect(reordered[0].queuePosition).toBe(1);
+        expect(reordered[1].featureId).toBe(second.featureId);
+        expect(reordered[1].queuePosition).toBe(2);
+        expect(reordered[2].featureId).toBe(third.featureId);
+        expect(reordered[2].queuePosition).toBe(3);
+      });
+
+      it('should deduplicate feature IDs while preserving order', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Second Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const third = await manager.createSession({
+          title: 'Third Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+
+        // Provide duplicates: third, second, third (duplicate)
+        const reordered = await manager.reorderQueuedSessions(projectId, [
+          third.featureId,
+          second.featureId,
+          third.featureId, // duplicate - should be ignored
+        ]);
+
+        expect(reordered).toHaveLength(2);
+        expect(reordered[0].featureId).toBe(third.featureId);
+        expect(reordered[0].queuePosition).toBe(1);
+        expect(reordered[1].featureId).toBe(second.featureId);
+        expect(reordered[1].queuePosition).toBe(2);
+      });
+
+      it('should throw error for non-queued session IDs', async () => {
+        const active = await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        await manager.createSession({
+          title: 'Queued Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+
+        // Try to reorder with active session ID (not queued)
+        await expect(
+          manager.reorderQueuedSessions(projectId, [active.featureId])
+        ).rejects.toThrow(/not queued sessions/i);
+      });
+
+      it('should throw error for non-existent feature IDs', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        await manager.createSession({
+          title: 'Queued Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+
+        await expect(
+          manager.reorderQueuedSessions(projectId, ['non-existent-feature'])
+        ).rejects.toThrow(/not queued sessions/i);
+      });
+
+      it('should handle partial reordering (only subset of queued sessions)', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Second Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const third = await manager.createSession({
+          title: 'Third Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const fourth = await manager.createSession({
+          title: 'Fourth Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+
+        // Only reorder third to front, others should follow in original order
+        const reordered = await manager.reorderQueuedSessions(projectId, [third.featureId]);
+
+        expect(reordered).toHaveLength(3);
+        expect(reordered[0].featureId).toBe(third.featureId);
+        expect(reordered[0].queuePosition).toBe(1);
+        expect(reordered[1].featureId).toBe(second.featureId);
+        expect(reordered[1].queuePosition).toBe(2);
+        expect(reordered[2].featureId).toBe(fourth.featureId);
+        expect(reordered[2].queuePosition).toBe(3);
+      });
+
+      it('should return empty array when no queued sessions', async () => {
+        const session = await manager.createSession({
+          title: 'Only Session',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+
+        const reordered = await manager.reorderQueuedSessions(projectId, []);
+
+        expect(reordered).toEqual([]);
+      });
+
+      it('should handle empty orderedFeatureIds array with existing queued sessions', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Second Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const third = await manager.createSession({
+          title: 'Third Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+
+        // Empty array - should preserve existing order
+        const reordered = await manager.reorderQueuedSessions(projectId, []);
+
+        expect(reordered).toHaveLength(2);
+        expect(reordered[0].featureId).toBe(second.featureId);
+        expect(reordered[0].queuePosition).toBe(1);
+        expect(reordered[1].featureId).toBe(third.featureId);
+        expect(reordered[1].queuePosition).toBe(2);
+      });
+
+      it('should persist reordering to disk', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Second Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const third = await manager.createSession({
+          title: 'Third Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+
+        // Reorder
+        await manager.reorderQueuedSessions(projectId, [third.featureId, second.featureId]);
+
+        // Read directly from disk to verify persistence
+        const refreshedSecond = await manager.getSession(projectId, second.featureId);
+        const refreshedThird = await manager.getSession(projectId, third.featureId);
+
+        expect(refreshedThird!.queuePosition).toBe(1);
+        expect(refreshedSecond!.queuePosition).toBe(2);
+      });
+    });
   });
 });

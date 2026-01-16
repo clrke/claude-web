@@ -446,6 +446,57 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Reorder queued sessions for a project with specified feature ID order
+   * @param projectId - The project ID
+   * @param orderedFeatureIds - Array of feature IDs in desired order (highest priority first)
+   * @returns Array of updated queued sessions in new order
+   * @throws Error if any feature ID is not found or not in queued status
+   */
+  async reorderQueuedSessions(projectId: string, orderedFeatureIds: string[]): Promise<Session[]> {
+    // Deduplicate feature IDs while preserving order
+    const uniqueFeatureIds = [...new Set(orderedFeatureIds)];
+
+    // Use lock to ensure atomic queue operations
+    return this.storage.withLock(`${projectId}/queue.lock`, async () => {
+      // Get current queued sessions
+      const queuedSessions = await this.getQueuedSessions(projectId);
+      const queuedFeatureIds = new Set(queuedSessions.map(s => s.featureId));
+
+      // Validate all provided IDs are actually queued sessions
+      const invalidIds: string[] = [];
+      for (const featureId of uniqueFeatureIds) {
+        if (!queuedFeatureIds.has(featureId)) {
+          invalidIds.push(featureId);
+        }
+      }
+
+      if (invalidIds.length > 0) {
+        throw new Error(`Invalid feature IDs (not queued sessions): ${invalidIds.join(', ')}`);
+      }
+
+      // Build new order: provided IDs first (in order), then any remaining queued sessions
+      const orderedSet = new Set(uniqueFeatureIds);
+      const remainingQueued = queuedSessions
+        .filter(s => !orderedSet.has(s.featureId))
+        .map(s => s.featureId);
+
+      const finalOrder = [...uniqueFeatureIds, ...remainingQueued];
+
+      // Update queue positions
+      const updatedSessions: Session[] = [];
+      for (let i = 0; i < finalOrder.length; i++) {
+        const featureId = finalOrder[i];
+        const updated = await this.updateSession(projectId, featureId, {
+          queuePosition: i + 1,
+        });
+        updatedSessions.push(updated);
+      }
+
+      return updatedSessions;
+    });
+  }
+
   async transitionStage(projectId: string, featureId: string, targetStage: number): Promise<Session> {
     const session = await this.getSession(projectId, featureId);
 
