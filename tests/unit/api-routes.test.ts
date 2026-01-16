@@ -1502,4 +1502,454 @@ describe('API Routes', () => {
       expect(response.body.error).toMatch(/validation failed/i);
     });
   });
+
+  describe('POST /api/sessions/:projectId/:featureId/backout', () => {
+    let projectId: string;
+    let featureId: string;
+
+    beforeEach(async () => {
+      // Create a session in active state (discovery)
+      const session = await sessionManager.createSession({
+        title: 'Test Feature',
+        featureDescription: 'Test description',
+        projectPath: '/test/project',
+      });
+      projectId = session.projectId;
+      featureId = session.featureId;
+    });
+
+    describe('pause action', () => {
+      it('should pause an active session', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause', reason: 'user_requested' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('paused');
+        expect(response.body.session.backoutReason).toBe('user_requested');
+        expect(response.body.session.backoutTimestamp).toBeDefined();
+      });
+
+      it('should pause session with blocked reason', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause', reason: 'blocked' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('paused');
+        expect(response.body.session.backoutReason).toBe('blocked');
+      });
+
+      it('should pause session with deprioritized reason', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause', reason: 'deprioritized' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('paused');
+        expect(response.body.session.backoutReason).toBe('deprioritized');
+      });
+
+      it('should default to user_requested reason when not provided', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.backoutReason).toBe('user_requested');
+      });
+
+      it('should persist pause to storage', async () => {
+        await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause' });
+
+        const session = await sessionManager.getSession(projectId, featureId);
+        expect(session!.status).toBe('paused');
+        expect(session!.backoutReason).toBe('user_requested');
+      });
+    });
+
+    describe('abandon action', () => {
+      it('should abandon an active session', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'abandon', reason: 'deprioritized' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('failed');
+        expect(response.body.session.backoutReason).toBe('deprioritized');
+        expect(response.body.session.backoutTimestamp).toBeDefined();
+      });
+
+      it('should persist abandon to storage', async () => {
+        await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'abandon' });
+
+        const session = await sessionManager.getSession(projectId, featureId);
+        expect(session!.status).toBe('failed');
+      });
+    });
+
+    describe('queue promotion', () => {
+      it('should promote next queued session when active session is backed out', async () => {
+        // Create a second session (will be queued)
+        const queuedSession = await sessionManager.createSession({
+          title: 'Queued Feature',
+          featureDescription: 'Test',
+          projectPath: '/test/project',
+        });
+
+        expect(queuedSession.status).toBe('queued');
+
+        // Back out the active session
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.promotedSession).toBeDefined();
+        expect(response.body.promotedSession.featureId).toBe(queuedSession.featureId);
+        expect(response.body.promotedSession.status).toBe('discovery');
+      });
+
+      it('should not promote when no queued sessions exist', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.promotedSession).toBeNull();
+      });
+    });
+
+    describe('validation and error handling', () => {
+      it('should return 404 for non-existent session', async () => {
+        const response = await request(app)
+          .post('/api/sessions/nonexistent/session/backout')
+          .send({ action: 'pause' });
+
+        expect(response.status).toBe(404);
+        expect(response.body.error).toMatch(/session not found/i);
+      });
+
+      it('should return 400 for invalid action', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'invalid_action' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/validation failed/i);
+      });
+
+      it('should return 400 for missing action', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({});
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/validation failed/i);
+      });
+
+      it('should return 400 for invalid reason', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause', reason: 'invalid_reason' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/validation failed/i);
+      });
+
+      it('should return 400 for completed session', async () => {
+        // Set session to completed (Stage 7)
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.currentStage = 7;
+        sessionData!.status = 'completed';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/cannot back out/i);
+      });
+
+      it('should return 400 for already paused session', async () => {
+        // First pause the session
+        await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause' });
+
+        // Try to pause again
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/cannot back out/i);
+      });
+
+      it('should return 400 for failed session', async () => {
+        // Set session to failed
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.status = 'failed';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'abandon' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/cannot back out/i);
+      });
+    });
+
+    describe('backout from different stages', () => {
+      it('should allow backout from Stage 2 (planning)', async () => {
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.currentStage = 2;
+        sessionData!.status = 'planning';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('paused');
+      });
+
+      it('should allow backout from Stage 3 (implementing)', async () => {
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.currentStage = 3;
+        sessionData!.status = 'implementing';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'abandon' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('failed');
+      });
+
+      it('should allow backout from Stage 6 (final_approval)', async () => {
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.currentStage = 6;
+        sessionData!.status = 'final_approval';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/backout`)
+          .send({ action: 'pause' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('paused');
+      });
+
+      it('should allow backout from queued status', async () => {
+        // Create active session first
+        await sessionManager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath: '/test/backout-queue',
+        });
+
+        // Create queued session
+        const queuedSession = await sessionManager.createSession({
+          title: 'Queued Feature',
+          featureDescription: 'Test',
+          projectPath: '/test/backout-queue',
+        });
+
+        expect(queuedSession.status).toBe('queued');
+
+        const response = await request(app)
+          .post(`/api/sessions/${queuedSession.projectId}/${queuedSession.featureId}/backout`)
+          .send({ action: 'abandon' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('failed');
+      });
+    });
+  });
+
+  describe('POST /api/sessions/:projectId/:featureId/resume', () => {
+    let projectId: string;
+    let featureId: string;
+
+    beforeEach(async () => {
+      // Create a session and pause it
+      const session = await sessionManager.createSession({
+        title: 'Test Feature',
+        featureDescription: 'Test description',
+        projectPath: '/test/resume-project',
+      });
+      projectId = session.projectId;
+      featureId = session.featureId;
+
+      // Pause the session
+      await sessionManager.backoutSession(projectId, featureId, 'pause', 'user_requested');
+    });
+
+    describe('successful resume', () => {
+      it('should resume a paused session', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).not.toBe('paused');
+        expect(response.body.session.backoutReason).toBeNull();
+        expect(response.body.session.backoutTimestamp).toBeNull();
+      });
+
+      it('should restore appropriate status based on stage', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        expect(response.status).toBe(200);
+        // Session was in Stage 1 (discovery) when paused
+        expect(response.body.session.status).toBe('discovery');
+      });
+
+      it('should return wasQueued false when no other active session', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.wasQueued).toBe(false);
+      });
+
+      it('should queue resumed session when another session is active', async () => {
+        // Create another active session
+        const activeSession = await sessionManager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath: '/test/resume-project',
+        });
+
+        expect(activeSession.status).toBe('discovery');
+
+        // Now resume the paused session
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('queued');
+        expect(response.body.wasQueued).toBe(true);
+        expect(response.body.session.queuePosition).toBe(1); // Front of queue
+      });
+
+      it('should persist resume to storage', async () => {
+        await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        const session = await sessionManager.getSession(projectId, featureId);
+        expect(session!.status).not.toBe('paused');
+        expect(session!.backoutReason).toBeNull();
+      });
+    });
+
+    describe('stage-based status restoration', () => {
+      it('should restore planning status for Stage 2', async () => {
+        // Update to Stage 2 and re-pause
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        let sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.currentStage = 2;
+        sessionData!.status = 'paused';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('planning');
+      });
+
+      it('should restore implementing status for Stage 3', async () => {
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        let sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.currentStage = 3;
+        sessionData!.status = 'paused';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.session.status).toBe('implementing');
+      });
+    });
+
+    describe('validation and error handling', () => {
+      it('should return 404 for non-existent session', async () => {
+        const response = await request(app)
+          .post('/api/sessions/nonexistent/session/resume');
+
+        expect(response.status).toBe(404);
+        expect(response.body.error).toMatch(/session not found/i);
+      });
+
+      it('should return 400 for non-paused session (discovery)', async () => {
+        // Resume first to make it active
+        await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        // Try to resume again
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/cannot resume/i);
+        expect(response.body.error).toMatch(/only paused sessions/i);
+      });
+
+      it('should return 400 for completed session', async () => {
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.currentStage = 7;
+        sessionData!.status = 'completed';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/cannot resume/i);
+      });
+
+      it('should return 400 for failed session', async () => {
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.status = 'failed';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/cannot resume/i);
+      });
+
+      it('should return 400 for queued session', async () => {
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.status = 'queued';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/resume`);
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/cannot resume/i);
+      });
+    });
+  });
 });
