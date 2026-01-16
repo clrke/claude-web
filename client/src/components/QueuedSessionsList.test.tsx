@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import QueuedSessionsList from './QueuedSessionsList';
 import type { Session } from '@claude-code-web/shared';
 
 const createMockSession = (featureId: string, queuePosition: number): Session => ({
   id: `session-${featureId}`,
   version: '1.0',
+  dataVersion: 1,
   projectId: 'test-project',
   featureId,
   title: `Feature ${featureId}`,
@@ -446,6 +448,158 @@ describe('QueuedSessionsList', () => {
       // Both sessions should render
       expect(screen.getByText('Feature feature-null')).toBeInTheDocument();
       expect(screen.getByText('Feature feature-2')).toBeInTheDocument();
+    });
+  });
+
+  describe('edit button', () => {
+    it('renders edit button for each queued session', () => {
+      const sessions = [
+        createMockSession('feature-1', 1),
+        createMockSession('feature-2', 2),
+      ];
+
+      renderWithRouter(
+        <QueuedSessionsList
+          sessions={sessions}
+          onReorder={vi.fn()}
+          formatRelativeTime={mockFormatRelativeTime}
+        />
+      );
+
+      expect(screen.getByTestId('edit-session-feature-1')).toBeInTheDocument();
+      expect(screen.getByTestId('edit-session-feature-2')).toBeInTheDocument();
+    });
+
+    it('renders edit button for single session (no drag-and-drop)', () => {
+      const sessions = [createMockSession('feature-1', 1)];
+
+      renderWithRouter(
+        <QueuedSessionsList
+          sessions={sessions}
+          onReorder={vi.fn()}
+          formatRelativeTime={mockFormatRelativeTime}
+        />
+      );
+
+      expect(screen.getByTestId('edit-session-feature-1')).toBeInTheDocument();
+    });
+
+    it('edit button has correct aria-label', () => {
+      const sessions = [createMockSession('my-feature', 1)];
+
+      renderWithRouter(
+        <QueuedSessionsList
+          sessions={sessions}
+          onReorder={vi.fn()}
+          formatRelativeTime={mockFormatRelativeTime}
+        />
+      );
+
+      const editButton = screen.getByTestId('edit-session-my-feature');
+      expect(editButton).toHaveAttribute('aria-label', 'Edit Feature my-feature');
+    });
+
+    it('navigates to edit page when edit button is clicked', async () => {
+      const user = userEvent.setup();
+      const sessions = [createMockSession('my-feature', 1)];
+
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <QueuedSessionsList
+                  sessions={sessions}
+                  onReorder={vi.fn()}
+                  formatRelativeTime={mockFormatRelativeTime}
+                />
+              }
+            />
+            <Route
+              path="/session/:projectId/:featureId/edit"
+              element={<div data-testid="edit-page">Edit Page</div>}
+            />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      const editButton = screen.getByTestId('edit-session-my-feature');
+      await user.click(editButton);
+
+      expect(screen.getByTestId('edit-page')).toBeInTheDocument();
+    });
+
+    it('clicking edit button does not navigate to session view', async () => {
+      const user = userEvent.setup();
+      const sessions = [createMockSession('my-feature', 1)];
+
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <QueuedSessionsList
+                  sessions={sessions}
+                  onReorder={vi.fn()}
+                  formatRelativeTime={mockFormatRelativeTime}
+                />
+              }
+            />
+            <Route
+              path="/session/:projectId/:featureId"
+              element={<div data-testid="session-view">Session View</div>}
+            />
+            <Route
+              path="/session/:projectId/:featureId/edit"
+              element={<div data-testid="edit-page">Edit Page</div>}
+            />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      const editButton = screen.getByTestId('edit-session-my-feature');
+      await user.click(editButton);
+
+      // Should navigate to edit page, not session view
+      expect(screen.getByTestId('edit-page')).toBeInTheDocument();
+      expect(screen.queryByTestId('session-view')).not.toBeInTheDocument();
+    });
+
+    it('edit button works in multi-session drag-and-drop mode', async () => {
+      const user = userEvent.setup();
+      const sessions = [
+        createMockSession('feature-1', 1),
+        createMockSession('feature-2', 2),
+      ];
+
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <QueuedSessionsList
+                  sessions={sessions}
+                  onReorder={vi.fn()}
+                  formatRelativeTime={mockFormatRelativeTime}
+                />
+              }
+            />
+            <Route
+              path="/session/:projectId/:featureId/edit"
+              element={<div data-testid="edit-page">Edit Page</div>}
+            />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      // Click edit button on second session
+      const editButton = screen.getByTestId('edit-session-feature-2');
+      await user.click(editButton);
+
+      expect(screen.getByTestId('edit-page')).toBeInTheDocument();
     });
   });
 });
