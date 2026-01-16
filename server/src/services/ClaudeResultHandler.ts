@@ -15,6 +15,12 @@ import {
 } from './PlanCompletionChecker';
 import { Session, Plan, Question, QuestionStage, QuestionCategory, ComposablePlan, ValidationAction } from '@claude-code-web/shared';
 import { isImplementationComplete, hasNewCommitSince } from '../utils/stateVerification';
+import {
+  processStepModifications,
+  detectModifiedStepsFromPlanSteps,
+  hasStepModificationMarkers,
+  StepModificationResult,
+} from './stepModificationParser';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
   1: 'discovery',
@@ -191,10 +197,14 @@ export class ClaudeResultHandler {
       planSteps = await this.parsePlanStepsFromFile(result.parsed.planFilePath);
       console.log(`[Stage 2] Found ${planSteps.length} plan steps in file`);
     }
-    if (planSteps.length > 0) {
-      console.log(`[Stage 2] Adding/updating ${planSteps.length} plan steps for ${session.featureId}`);
-      await this.mergePlanSteps(sessionDir, planSteps);
-    }
+
+    // Process step modifications (removals, edits, additions)
+    const modificationResult = await this.processStepModificationsForStage2(
+      sessionDir,
+      session,
+      result.output,
+      planSteps
+    );
 
     // Save any new questions (review findings) with validation
     let allFiltered = false;
@@ -212,6 +222,210 @@ export class ClaudeResultHandler {
     const planValidation = await this.validatePlanCompleteness(session, sessionDir);
 
     return { allFiltered, planValidation };
+  }
+
+  /**
+   * Process step modifications during Stage 2 revision.
+   * Handles step removals (with cascade deletion), edits, and additions.
+   * Updates session with tracking fields for Stage 3 consumption.
+   */
+  private async processStepModificationsForStage2(
+    sessionDir: string,
+    session: Session,
+    claudeOutput: string,
+    parsedPlanSteps: ParsedPlanStep[]
+  ): Promise<StepModificationResult | null> {
+    const planPath = `${sessionDir}/plan.json`;
+    const plan = await this.storage.readJson<Plan>(planPath);
+
+    if (!plan) {
+      console.log(`[Stage 2] No plan found for ${sessionDir}, skipping modification processing`);
+      return null;
+    }
+
+    // Check if there are any modification markers
+    const hasModificationMarkers = hasStepModificationMarkers(claudeOutput);
+    const hasPlanSteps = parsedPlanSteps.length > 0;
+
+    if (!hasModificationMarkers && !hasPlanSteps) {
+      console.log(`[Stage 2] No step modifications detected for ${session.featureId}`);
+      return null;
+    }
+
+    const existingStepIds = new Set(plan.steps.map(s => s.id));
+
+    // Detect which steps are being modified vs added from PLAN_STEP markers
+    const { modifiedIds: detectedModifiedIds, newIds: detectedNewIds } = detectModifiedStepsFromPlanSteps(
+      claudeOutput,
+      existingStepIds
+    );
+
+    // Process step modification markers (REMOVE_STEPS, STEP_MODIFICATIONS)
+    const modificationResult = processStepModifications(
+      claudeOutput,
+      plan.steps,
+      detectedNewIds
+    );
+
+    // Log any validation errors but continue processing
+    if (modificationResult.errors.length > 0) {
+      console.warn(`[Stage 2] Step modification validation warnings for ${session.featureId}:`, modificationResult.errors);
+    }
+
+    // Apply step removals (includes cascade-deleted children)
+    if (modificationResult.allRemovedStepIds.length > 0) {
+      await this.removeStepsFromPlan(sessionDir, modificationResult.allRemovedStepIds);
+      console.log(`[Stage 2] Removed ${modificationResult.allRemovedStepIds.length} steps (${modificationResult.cascadeDeletedStepIds.length} via cascade) for ${session.featureId}`);
+    }
+
+    // Apply step additions and edits via enhanced mergePlanSteps
+    if (parsedPlanSteps.length > 0) {
+      const mergeResult = await this.mergePlanStepsWithEdits(
+        sessionDir,
+        parsedPlanSteps,
+        detectedModifiedIds
+      );
+      console.log(`[Stage 2] Merged steps: ${mergeResult.addedCount} added, ${mergeResult.editedCount} edited for ${session.featureId}`);
+    }
+
+    // Update session with modification tracking fields for Stage 3
+    const modifiedStepIds = Array.from(new Set([
+      ...modificationResult.modifications.modifiedStepIds,
+      ...detectedModifiedIds
+    ]));
+    const addedStepIds = Array.from(new Set([
+      ...modificationResult.modifications.addedStepIds,
+      ...detectedNewIds
+    ]));
+    const removedStepIds = modificationResult.allRemovedStepIds;
+
+    if (modifiedStepIds.length > 0 || addedStepIds.length > 0 || removedStepIds.length > 0) {
+      await this.sessionManager.updateSession(
+        session.projectId,
+        session.featureId,
+        {
+          modifiedStepIds,
+          addedStepIds,
+          removedStepIds,
+        }
+      );
+      console.log(`[Stage 2] Updated session tracking: ${modifiedStepIds.length} modified, ${addedStepIds.length} added, ${removedStepIds.length} removed`);
+    }
+
+    return modificationResult;
+  }
+
+  /**
+   * Remove steps from plan by IDs (supports cascade deletion).
+   * Also resets dependent steps to pending status.
+   */
+  private async removeStepsFromPlan(
+    sessionDir: string,
+    stepIdsToRemove: string[]
+  ): Promise<void> {
+    const planPath = `${sessionDir}/plan.json`;
+    const plan = await this.storage.readJson<Plan>(planPath);
+
+    if (!plan) return;
+
+    const removedSet = new Set(stepIdsToRemove);
+
+    // Remove the steps from plan.steps array
+    plan.steps = plan.steps.filter(s => !removedSet.has(s.id));
+
+    // Reset dependent steps to pending (steps that depend on removed steps)
+    // Check stepDependencies if available (plan.json may contain composable plan format)
+    const planWithDeps = plan as Plan & { dependencies?: { stepDependencies?: Array<{ stepId: string; dependsOn?: string[] }> } };
+    if (planWithDeps.dependencies?.stepDependencies) {
+      for (const dep of planWithDeps.dependencies.stepDependencies) {
+        // Check if this dependency references any removed step
+        const dependsOnRemoved = dep.dependsOn?.some((depId: string) => removedSet.has(depId));
+        if (dependsOnRemoved) {
+          const dependentStep = plan.steps.find(s => s.id === dep.stepId);
+          if (dependentStep && dependentStep.status !== 'pending') {
+            console.log(`[Stage 2] Resetting dependent step ${dep.stepId} to pending (depends on removed step)`);
+            dependentStep.status = 'pending';
+            delete dependentStep.contentHash; // Force re-implementation
+          }
+        }
+      }
+    }
+
+    // Increment plan version
+    plan.planVersion = (plan.planVersion || 1) + 1;
+
+    await this.storage.writeJson(planPath, plan);
+  }
+
+  /**
+   * Merge plan steps with support for both additions and edits.
+   * When a step ID already exists, updates title/description and resets status to pending.
+   */
+  private async mergePlanStepsWithEdits(
+    sessionDir: string,
+    newSteps: ParsedPlanStep[],
+    modifiedStepIds: string[]
+  ): Promise<{ addedCount: number; editedCount: number }> {
+    const planPath = `${sessionDir}/plan.json`;
+    const plan = await this.storage.readJson<Plan>(planPath);
+
+    if (!plan) return { addedCount: 0, editedCount: 0 };
+
+    const existingStepMap = new Map(plan.steps.map(s => [s.id, s]));
+    const modifiedSet = new Set(modifiedStepIds);
+    let addedCount = 0;
+    let editedCount = 0;
+
+    for (const newStep of newSteps) {
+      const existingStep = existingStepMap.get(newStep.id);
+
+      if (existingStep) {
+        // Edit existing step - check if content changed
+        const titleChanged = existingStep.title !== newStep.title;
+        const descriptionChanged = existingStep.description !== newStep.description;
+
+        if (titleChanged || descriptionChanged || modifiedSet.has(newStep.id)) {
+          // Update content
+          existingStep.title = newStep.title;
+          existingStep.description = newStep.description;
+          existingStep.parentId = newStep.parentId;
+
+          // Reset status to pending and clear contentHash to force re-implementation
+          if (existingStep.status === 'completed' || existingStep.status === 'skipped') {
+            existingStep.status = 'pending';
+          }
+          delete existingStep.contentHash;
+
+          editedCount++;
+          console.log(`[Stage 2] Edited step: ${newStep.id} - ${newStep.title}`);
+        }
+      } else {
+        // Add new step at the end with next orderIndex
+        const maxOrderIndex = plan.steps.length > 0
+          ? Math.max(...plan.steps.map(s => s.orderIndex))
+          : -1;
+
+        plan.steps.push({
+          id: newStep.id,
+          parentId: newStep.parentId,
+          orderIndex: maxOrderIndex + 1,
+          title: newStep.title,
+          description: newStep.description,
+          status: 'pending',
+          metadata: {},
+        });
+        addedCount++;
+        console.log(`[Stage 2] Added new step: ${newStep.id} - ${newStep.title}`);
+      }
+    }
+
+    if (addedCount > 0 || editedCount > 0) {
+      plan.planVersion = (plan.planVersion || 0) + 1;
+      await this.storage.writeJson(planPath, plan);
+      console.log(`[Stage 2] Merged steps into plan for ${sessionDir}: ${addedCount} added, ${editedCount} edited`);
+    }
+
+    return { addedCount, editedCount };
   }
 
   /**
