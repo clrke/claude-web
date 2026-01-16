@@ -11,6 +11,10 @@ import {
   ExecutionSubState,
   StepProgress,
   QueueReorderedEvent,
+  SessionBackedOutEvent,
+  SessionResumedEvent,
+  BackoutReason,
+  BackoutAction,
 } from '@claude-code-web/shared';
 
 /**
@@ -243,5 +247,63 @@ export class EventBroadcaster {
       timestamp: new Date().toISOString(),
     };
     this.io.to(projectId).emit('queue.reordered', event);
+  }
+
+  /**
+   * Broadcast session backed out event
+   */
+  sessionBackedOut(
+    projectId: string,
+    featureId: string,
+    sessionId: string,
+    action: BackoutAction,
+    reason: BackoutReason,
+    newStatus: Session['status'],
+    previousStage: number,
+    nextSessionId: string | null
+  ): void {
+    const room = this.getRoom(projectId, featureId);
+    const event: SessionBackedOutEvent = {
+      projectId,
+      featureId,
+      sessionId,
+      action,
+      reason,
+      newStatus,
+      previousStage,
+      nextSessionId,
+      timestamp: new Date().toISOString(),
+    };
+    this.io.to(room).emit('session.backedout', event);
+    // Also emit to project room so all watchers know about queue changes
+    this.io.to(projectId).emit('session.backedout', event);
+  }
+
+  /**
+   * Broadcast session resumed event
+   */
+  sessionResumed(
+    projectId: string,
+    featureId: string,
+    sessionId: string,
+    newStatus: Session['status'],
+    resumedStage: number,
+    wasQueued: boolean,
+    queuePosition: number | null
+  ): void {
+    const room = this.getRoom(projectId, featureId);
+    const event: SessionResumedEvent = {
+      projectId,
+      featureId,
+      sessionId,
+      newStatus,
+      resumedStage,
+      wasQueued,
+      queuePosition,
+      timestamp: new Date().toISOString(),
+    };
+    this.io.to(room).emit('session.resumed', event);
+    // Also emit to project room so all watchers know about queue changes
+    this.io.to(projectId).emit('session.resumed', event);
   }
 }
