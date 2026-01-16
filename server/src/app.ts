@@ -1300,11 +1300,14 @@ async function handleStage3Completion(
   }
 
   // Clear modification tracking fields from Stage 2 revision (no longer needed)
-  if (session.modifiedStepIds || session.addedStepIds || session.removedStepIds) {
+  if (session.modifiedStepIds || session.addedStepIds || session.removedStepIds ||
+      session.originalCompletedStepIds || session.isPlanModificationSession) {
     await sessionManager.updateSession(session.projectId, session.featureId, {
       modifiedStepIds: undefined,
       addedStepIds: undefined,
       removedStepIds: undefined,
+      originalCompletedStepIds: undefined,
+      isPlanModificationSession: undefined,
     });
     console.log(`Cleared step modification tracking for ${session.featureId}`);
   }
@@ -2534,19 +2537,36 @@ export function createApp(
           return res.status(400).json({ error: 'Feedback is required when requesting plan changes' });
         }
 
+        // Read the current plan to capture original state before modifications
+        const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+        if (!plan) {
+          return res.status(400).json({ error: 'Plan not found for plan changes' });
+        }
+
+        // Capture IDs of completed steps before entering modification session
+        const originalCompletedStepIds = plan.steps
+          .filter(s => s.status === 'completed')
+          .map(s => s.id);
+
+        // Clear any previous modification tracking and initialize for new modification session
+        await sessionManager.updateSession(projectId, featureId, {
+          modifiedStepIds: undefined,
+          addedStepIds: undefined,
+          removedStepIds: undefined,
+          originalCompletedStepIds,
+          isPlanModificationSession: true,
+        });
+
         const updatedSession = await sessionManager.transitionStage(projectId, featureId, 2);
 
         eventBroadcaster?.stageChanged(updatedSession, previousStage);
 
         // Build Stage 2 prompt with user's feedback
-        const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
-        if (plan) {
-          const _currentIteration = (plan.reviewCount || 0) + 1; // Track iteration for future use
-          const prompt = buildPlanRevisionPrompt(updatedSession, plan, feedback);
-          await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
-        }
+        const _currentIteration = (plan.reviewCount || 0) + 1; // Track iteration for future use
+        const prompt = buildPlanRevisionPrompt(updatedSession, plan, feedback);
+        await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
 
-        console.log(`Session ${featureId} returned to Stage 2 for plan changes`);
+        console.log(`Session ${featureId} returned to Stage 2 for plan changes (modification session with ${originalCompletedStepIds.length} completed steps)`);
         res.json({ success: true, session: updatedSession });
 
       } else if (action === 're_review') {

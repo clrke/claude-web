@@ -249,4 +249,161 @@ describe('Session step modification tracking fields', () => {
       expect(isStepRemoved('step-1')).toBe(false);
     });
   });
+
+  describe('originalCompletedStepIds field', () => {
+    it('should allow session without originalCompletedStepIds (optional field)', () => {
+      const session: Session = { ...baseSession };
+      expect(session.originalCompletedStepIds).toBeUndefined();
+    });
+
+    it('should allow session with empty originalCompletedStepIds array', () => {
+      const session: Session = {
+        ...baseSession,
+        originalCompletedStepIds: [],
+      };
+      expect(session.originalCompletedStepIds).toEqual([]);
+    });
+
+    it('should allow session with originalCompletedStepIds containing step IDs', () => {
+      const session: Session = {
+        ...baseSession,
+        originalCompletedStepIds: ['step-1', 'step-2', 'step-3'],
+      };
+      expect(session.originalCompletedStepIds).toEqual(['step-1', 'step-2', 'step-3']);
+      expect(session.originalCompletedStepIds).toHaveLength(3);
+    });
+
+    it('should allow checking if a step was originally completed', () => {
+      const session: Session = {
+        ...baseSession,
+        originalCompletedStepIds: ['step-1', 'step-2'],
+      };
+      expect(session.originalCompletedStepIds?.includes('step-1')).toBe(true);
+      expect(session.originalCompletedStepIds?.includes('step-3')).toBe(false);
+    });
+
+    it('should allow comparison between original and current state', () => {
+      const session: Session = {
+        ...baseSession,
+        originalCompletedStepIds: ['step-1', 'step-2'],
+        modifiedStepIds: ['step-2'], // step-2 was completed but now modified
+        addedStepIds: ['step-4'], // step-4 is new
+        removedStepIds: ['step-1'], // step-1 was completed but removed
+      };
+
+      // Check which originally completed steps need re-implementation
+      const originallyCompleted = new Set(session.originalCompletedStepIds || []);
+      const modified = new Set(session.modifiedStepIds || []);
+      const removed = new Set(session.removedStepIds || []);
+
+      // step-1 was completed and removed - no action needed
+      expect(originallyCompleted.has('step-1')).toBe(true);
+      expect(removed.has('step-1')).toBe(true);
+
+      // step-2 was completed but modified - needs re-implementation
+      expect(originallyCompleted.has('step-2')).toBe(true);
+      expect(modified.has('step-2')).toBe(true);
+    });
+  });
+
+  describe('isPlanModificationSession field', () => {
+    it('should allow session without isPlanModificationSession (optional field)', () => {
+      const session: Session = { ...baseSession };
+      expect(session.isPlanModificationSession).toBeUndefined();
+    });
+
+    it('should allow session with isPlanModificationSession set to true', () => {
+      const session: Session = {
+        ...baseSession,
+        isPlanModificationSession: true,
+      };
+      expect(session.isPlanModificationSession).toBe(true);
+    });
+
+    it('should allow session with isPlanModificationSession set to false', () => {
+      const session: Session = {
+        ...baseSession,
+        isPlanModificationSession: false,
+      };
+      expect(session.isPlanModificationSession).toBe(false);
+    });
+
+    it('should indicate modification session context', () => {
+      // Initial planning session
+      const initialSession: Session = {
+        ...baseSession,
+        currentStage: 2,
+        status: 'planning',
+        isPlanModificationSession: undefined, // or false
+      };
+      expect(initialSession.isPlanModificationSession).toBeFalsy();
+
+      // Modification session (returned from Stage 6)
+      const modificationSession: Session = {
+        ...baseSession,
+        currentStage: 2,
+        status: 'planning',
+        isPlanModificationSession: true,
+        originalCompletedStepIds: ['step-1', 'step-2'],
+      };
+      expect(modificationSession.isPlanModificationSession).toBe(true);
+      expect(modificationSession.originalCompletedStepIds).toBeDefined();
+    });
+  });
+
+  describe('plan_changes action workflow', () => {
+    it('should initialize modification tracking for plan_changes workflow', () => {
+      // Simulates what plan_changes action does before spawning Stage 2
+      const sessionBeforeModification: Session = {
+        ...baseSession,
+        currentStage: 6,
+        status: 'final_approval',
+        // Might have stale tracking from previous modification
+        modifiedStepIds: ['old-step'],
+        addedStepIds: ['old-added'],
+        removedStepIds: ['old-removed'],
+      };
+
+      // After plan_changes initializes tracking
+      const sessionAfterInit: Session = {
+        ...sessionBeforeModification,
+        currentStage: 2,
+        status: 'planning',
+        // Previous tracking cleared
+        modifiedStepIds: undefined,
+        addedStepIds: undefined,
+        removedStepIds: undefined,
+        // New tracking initialized
+        originalCompletedStepIds: ['step-1', 'step-2', 'step-3'],
+        isPlanModificationSession: true,
+      };
+
+      expect(sessionAfterInit.modifiedStepIds).toBeUndefined();
+      expect(sessionAfterInit.addedStepIds).toBeUndefined();
+      expect(sessionAfterInit.removedStepIds).toBeUndefined();
+      expect(sessionAfterInit.originalCompletedStepIds).toHaveLength(3);
+      expect(sessionAfterInit.isPlanModificationSession).toBe(true);
+    });
+
+    it('should clear tracking after Stage 3 completion', () => {
+      // Session after Stage 3 completes all steps
+      const sessionAfterStage3: Session = {
+        ...baseSession,
+        currentStage: 4,
+        status: 'pr_creation',
+        // All tracking should be cleared
+        modifiedStepIds: undefined,
+        addedStepIds: undefined,
+        removedStepIds: undefined,
+        originalCompletedStepIds: undefined,
+        isPlanModificationSession: undefined,
+      };
+
+      expect(sessionAfterStage3.modifiedStepIds).toBeUndefined();
+      expect(sessionAfterStage3.addedStepIds).toBeUndefined();
+      expect(sessionAfterStage3.removedStepIds).toBeUndefined();
+      expect(sessionAfterStage3.originalCompletedStepIds).toBeUndefined();
+      expect(sessionAfterStage3.isPlanModificationSession).toBeUndefined();
+    });
+  });
 });
