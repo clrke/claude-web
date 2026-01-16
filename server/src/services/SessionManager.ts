@@ -516,12 +516,30 @@ export class SessionManager {
       throw new Error(`Cannot start queued session: another session is active (${activeSession.featureId})`);
     }
 
-    return this.updateSession(projectId, featureId, {
+    const now = new Date().toISOString();
+
+    // Update session.json
+    const updatedSession = await this.updateSession(projectId, featureId, {
       status: 'discovery',
       currentStage: 1,
       queuePosition: null,
       queuedAt: null,
     });
+
+    // Update status.json to reflect the session is starting
+    const sessionPath = this.getSessionPath(projectId, featureId);
+    const statusPath = `${sessionPath}/status.json`;
+    const statusFile = await this.storage.readJson<Record<string, unknown>>(statusPath);
+    if (statusFile) {
+      statusFile.status = 'idle';
+      statusFile.currentStage = 1;
+      statusFile.timestamp = now;
+      statusFile.lastAction = 'session_dequeued';
+      statusFile.lastActionAt = now;
+      await this.storage.writeJson(statusPath, statusFile);
+    }
+
+    return updatedSession;
   }
 
   /**
