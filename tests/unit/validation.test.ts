@@ -248,7 +248,7 @@ describe('Validation Schemas', () => {
 
     it('should reject stage out of range', () => {
       const result = UpdateSessionInputSchema.safeParse({
-        currentStage: 6,
+        currentStage: 8,
       });
       expect(result.success).toBe(false);
     });
@@ -366,9 +366,9 @@ describe('Validation Schemas', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should reject stage above 5', () => {
+    it('should reject stage above 7', () => {
       const result = StageTransitionInputSchema.safeParse({
-        targetStage: 6,
+        targetStage: 8,
       });
       expect(result.success).toBe(false);
     });
