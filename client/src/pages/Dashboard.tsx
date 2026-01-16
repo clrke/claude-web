@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import type { Session } from '@claude-code-web/shared';
+import { useSessionStore } from '../stores/sessionStore';
+import QueuedSessionsList from '../components/QueuedSessionsList';
 
 const STAGE_LABELS: Record<number, string> = {
   0: 'Queued',
@@ -52,6 +54,16 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Store state for queue management
+  const {
+    queuedSessions,
+    setQueuedSessions,
+    isReorderingQueue,
+    reorderQueue,
+    error: storeError,
+    setError: setStoreError,
+  } = useSessionStore();
+
   useEffect(() => {
     async function fetchSessions() {
       try {
@@ -61,6 +73,10 @@ export default function Dashboard() {
         }
         const data = await response.json();
         setSessions(data);
+
+        // Separate queued sessions and store in global state
+        const queued = data.filter((s: Session) => s.status === 'queued');
+        setQueuedSessions(queued);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load sessions');
       } finally {
@@ -69,7 +85,43 @@ export default function Dashboard() {
     }
 
     fetchSessions();
-  }, []);
+  }, [setQueuedSessions]);
+
+  // Separate sessions into queued and non-queued
+  const { nonQueuedSessions, activeSession } = useMemo(() => {
+    const nonQueued = sessions.filter((s) => s.status !== 'queued');
+    const active = sessions.find(
+      (s) => s.status !== 'queued' && s.status !== 'completed' && s.status !== 'paused'
+    );
+    return { nonQueuedSessions: nonQueued, activeSession: active };
+  }, [sessions]);
+
+  // Get the projectId for reordering (from active session or first queued session)
+  const projectId = useMemo(() => {
+    if (activeSession) return activeSession.projectId;
+    if (queuedSessions.length > 0) return queuedSessions[0].projectId;
+    return null;
+  }, [activeSession, queuedSessions]);
+
+  const handleReorder = useCallback(
+    async (orderedFeatureIds: string[]) => {
+      if (!projectId) return;
+      try {
+        await reorderQueue(projectId, orderedFeatureIds);
+      } catch {
+        // Error is already set in store
+      }
+    },
+    [projectId, reorderQueue]
+  );
+
+  // Clear store error when component unmounts
+  useEffect(() => {
+    return () => setStoreError(null);
+  }, [setStoreError]);
+
+  // Display combined errors
+  const displayError = error || storeError;
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -90,61 +142,95 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      <section>
-        <h2 className="text-xl font-semibold mb-4">Recent Sessions</h2>
+      {displayError && (
+        <div className="bg-red-900/30 border border-red-700 rounded-lg p-4 text-red-400 mb-6">
+          {displayError}
+        </div>
+      )}
 
-        {isLoading && (
-          <div className="bg-gray-800 rounded-lg p-6 text-gray-400">
-            Loading sessions...
-          </div>
-        )}
+      {isLoading && (
+        <div className="bg-gray-800 rounded-lg p-6 text-gray-400">
+          Loading sessions...
+        </div>
+      )}
 
-        {error && (
-          <div className="bg-red-900/30 border border-red-700 rounded-lg p-4 text-red-400">
-            {error}
-          </div>
-        )}
+      {!isLoading && !error && sessions.length === 0 && (
+        <div className="bg-gray-800 rounded-lg p-6 text-gray-400">
+          No sessions yet. Create your first session to get started.
+        </div>
+      )}
 
-        {!isLoading && !error && sessions.length === 0 && (
-          <div className="bg-gray-800 rounded-lg p-6 text-gray-400">
-            No sessions yet. Create your first session to get started.
-          </div>
-        )}
+      {!isLoading && !error && sessions.length > 0 && (
+        <>
+          {/* Queued Sessions Section */}
+          {queuedSessions.length > 0 && (
+            <section className="mb-8">
+              <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                <span className="text-yellow-500">Queue</span>
+                <span className="text-gray-500 text-sm font-normal">
+                  ({queuedSessions.length} session{queuedSessions.length !== 1 ? 's' : ''})
+                </span>
+                {queuedSessions.length > 1 && (
+                  <span className="text-gray-600 text-xs font-normal ml-2">
+                    Drag to reorder
+                  </span>
+                )}
+              </h2>
+              <QueuedSessionsList
+                sessions={queuedSessions}
+                onReorder={handleReorder}
+                isReordering={isReorderingQueue}
+                formatRelativeTime={formatRelativeTime}
+              />
+            </section>
+          )}
 
-        {!isLoading && !error && sessions.length > 0 && (
-          <div className="space-y-3">
-            {sessions.map((session) => (
-              <Link
-                key={`${session.projectId}/${session.featureId}`}
-                to={`/session/${session.projectId}/${session.featureId}`}
-                className="block bg-gray-800 hover:bg-gray-700 rounded-lg p-4 transition-colors"
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-medium text-lg">{session.title}</h3>
-                    <p className="text-gray-400 text-sm mt-1 truncate">
-                      {session.projectPath}
-                    </p>
-                    {session.featureDescription && (
-                      <p className="text-gray-500 text-sm mt-1 line-clamp-2">
-                        {session.featureDescription}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 sm:gap-3 sm:ml-4 flex-wrap">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${STATUS_COLORS[session.status] || 'bg-gray-600'}`}>
-                      Stage {session.currentStage}: {STAGE_LABELS[session.currentStage]}
-                    </span>
-                    <span className="text-gray-500 text-sm">
-                      {formatRelativeTime(new Date(session.updatedAt))}
-                    </span>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
-      </section>
+          {/* Active and Other Sessions */}
+          <section>
+            <h2 className="text-xl font-semibold mb-4">
+              {queuedSessions.length > 0 ? 'Active & Completed Sessions' : 'Recent Sessions'}
+            </h2>
+
+            {nonQueuedSessions.length === 0 ? (
+              <div className="bg-gray-800 rounded-lg p-6 text-gray-400">
+                No active or completed sessions.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {nonQueuedSessions.map((session) => (
+                  <Link
+                    key={`${session.projectId}/${session.featureId}`}
+                    to={`/session/${session.projectId}/${session.featureId}`}
+                    className="block bg-gray-800 hover:bg-gray-700 rounded-lg p-4 transition-colors"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium text-lg">{session.title}</h3>
+                        <p className="text-gray-400 text-sm mt-1 truncate">
+                          {session.projectPath}
+                        </p>
+                        {session.featureDescription && (
+                          <p className="text-gray-500 text-sm mt-1 line-clamp-2">
+                            {session.featureDescription}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 sm:gap-3 sm:ml-4 flex-wrap">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${STATUS_COLORS[session.status] || 'bg-gray-600'}`}>
+                          Stage {session.currentStage}: {STAGE_LABELS[session.currentStage]}
+                        </span>
+                        <span className="text-gray-500 text-sm">
+                          {formatRelativeTime(new Date(session.updatedAt))}
+                        </span>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      )}
     </div>
   );
 }
