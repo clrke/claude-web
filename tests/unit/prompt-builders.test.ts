@@ -12,8 +12,9 @@ import {
   buildStage4PromptLean,
   buildStage5PromptLean,
   buildBatchAnswersContinuationPromptLean,
+  formatValidationContextSection,
 } from '../../server/src/prompts/stagePrompts';
-import { Session, Plan, Question, PlanStep } from '@claude-code-web/shared';
+import { Session, Plan, Question, PlanStep, ValidationContext } from '@claude-code-web/shared';
 
 describe('Stage Prompt Builders', () => {
   const mockSession: Session = {
@@ -1335,6 +1336,291 @@ This is review 2 of 10 recommended.`;
 
       // Full prompt is typically 3000+ chars, lean should be under 400
       expect(leanPrompt.length).toBeLessThan(400);
+    });
+  });
+});
+
+describe('Validation Context in Prompts', () => {
+  const mockQuestion: Question = {
+    id: 'q1',
+    sessionId: 'test',
+    questionText: 'Which auth approach should we use?',
+    questionType: 'decision',
+    priority: 1,
+    category: 'approach',
+    options: [],
+    status: 'answered',
+    batch: 1,
+    stage: 1,
+    createdAt: '2026-01-11T00:00:00Z',
+    answer: {
+      value: 'Use JWT with refresh tokens',
+      answeredAt: '2026-01-11T00:01:00Z',
+    },
+  };
+
+  const emptyValidationContext: ValidationContext = {
+    summary: {
+      totalProcessed: 0,
+      passedCount: 0,
+      filteredCount: 0,
+      repurposedCount: 0,
+    },
+    filteredQuestions: [],
+    repurposedQuestions: [],
+  };
+
+  const validationContextWithFiltered: ValidationContext = {
+    summary: {
+      totalProcessed: 5,
+      passedCount: 3,
+      filteredCount: 2,
+      repurposedCount: 0,
+    },
+    filteredQuestions: [
+      {
+        decisionId: 'filter-1',
+        questionText: 'What database should we use?',
+        reason: 'Already determined from codebase - using PostgreSQL',
+        filteredAt: '2026-01-11T00:00:00Z',
+      },
+      {
+        decisionId: 'filter-2',
+        questionText: 'Should we use TypeScript?',
+        reason: 'Project already uses TypeScript',
+        filteredAt: '2026-01-11T00:01:00Z',
+      },
+    ],
+    repurposedQuestions: [],
+  };
+
+  const validationContextWithRepurposed: ValidationContext = {
+    summary: {
+      totalProcessed: 3,
+      passedCount: 1,
+      filteredCount: 0,
+      repurposedCount: 2,
+    },
+    filteredQuestions: [],
+    repurposedQuestions: [
+      {
+        originalDecisionId: 'repurpose-1',
+        originalQuestionText: 'What tech stack should we use?',
+        reason: 'Question too broad - split into specific questions',
+        newQuestionTexts: [
+          'What frontend framework should we use?',
+          'What backend language should we use?',
+        ],
+        repurposedAt: '2026-01-11T00:00:00Z',
+      },
+      {
+        originalDecisionId: 'repurpose-2',
+        originalQuestionText: 'How should we handle errors?',
+        reason: 'Made more specific',
+        newQuestionTexts: ['Should we use a global error boundary or per-component error handling?'],
+        repurposedAt: '2026-01-11T00:01:00Z',
+      },
+    ],
+  };
+
+  const fullValidationContext: ValidationContext = {
+    summary: {
+      totalProcessed: 10,
+      passedCount: 5,
+      filteredCount: 3,
+      repurposedCount: 2,
+    },
+    filteredQuestions: [
+      {
+        decisionId: 'filter-1',
+        questionText: 'What database?',
+        reason: 'Already using PostgreSQL',
+        filteredAt: '2026-01-11T00:00:00Z',
+      },
+    ],
+    repurposedQuestions: [
+      {
+        originalDecisionId: 'repurpose-1',
+        originalQuestionText: 'What approach?',
+        reason: 'Too vague',
+        newQuestionTexts: ['Option A or B?'],
+        repurposedAt: '2026-01-11T00:00:00Z',
+      },
+    ],
+  };
+
+  describe('formatValidationContextSection', () => {
+    it('should return empty string for null context', () => {
+      const result = formatValidationContextSection(null);
+      expect(result).toBe('');
+    });
+
+    it('should return empty string for undefined context', () => {
+      const result = formatValidationContextSection(undefined);
+      expect(result).toBe('');
+    });
+
+    it('should return empty string for empty context (no filtered or repurposed)', () => {
+      const result = formatValidationContextSection(emptyValidationContext);
+      expect(result).toBe('');
+    });
+
+    it('should include summary counts', () => {
+      const result = formatValidationContextSection(fullValidationContext);
+
+      expect(result).toContain('Total questions processed: 10');
+      expect(result).toContain('Passed: 5');
+      expect(result).toContain('Filtered: 3');
+      expect(result).toContain('Repurposed: 2');
+    });
+
+    it('should include filtered questions section', () => {
+      const result = formatValidationContextSection(validationContextWithFiltered);
+
+      expect(result).toContain('Filtered Questions');
+      expect(result).toContain('What database should we use?');
+      expect(result).toContain('Already determined from codebase - using PostgreSQL');
+      expect(result).toContain('Should we use TypeScript?');
+      expect(result).toContain('Project already uses TypeScript');
+    });
+
+    it('should include repurposed questions section', () => {
+      const result = formatValidationContextSection(validationContextWithRepurposed);
+
+      expect(result).toContain('Repurposed Questions');
+      expect(result).toContain('What tech stack should we use?');
+      expect(result).toContain('Question too broad - split into specific questions');
+      expect(result).toContain('What frontend framework should we use?');
+      expect(result).toContain('What backend language should we use?');
+    });
+
+    it('should include both filtered and repurposed when present', () => {
+      const result = formatValidationContextSection(fullValidationContext);
+
+      expect(result).toContain('Filtered Questions');
+      expect(result).toContain('Repurposed Questions');
+    });
+
+    it('should include note about considering context', () => {
+      const result = formatValidationContextSection(fullValidationContext);
+
+      expect(result).toContain('Consider this context when processing');
+    });
+
+    it('should handle repurposed questions with no replacements', () => {
+      const contextWithEmptyReplacement: ValidationContext = {
+        summary: {
+          totalProcessed: 1,
+          passedCount: 0,
+          filteredCount: 0,
+          repurposedCount: 1,
+        },
+        filteredQuestions: [],
+        repurposedQuestions: [
+          {
+            originalDecisionId: 'r1',
+            originalQuestionText: 'Invalid question',
+            reason: 'Not applicable',
+            newQuestionTexts: [],
+            repurposedAt: '2026-01-11T00:00:00Z',
+          },
+        ],
+      };
+
+      const result = formatValidationContextSection(contextWithEmptyReplacement);
+
+      expect(result).toContain('(no replacement questions)');
+    });
+  });
+
+  describe('buildBatchAnswersContinuationPrompt with ValidationContext', () => {
+    it('should not include validation section when context is null', () => {
+      const prompt = buildBatchAnswersContinuationPrompt([mockQuestion], 1, '/path/plan.md', undefined, null);
+
+      expect(prompt).not.toContain('Validation Context');
+      expect(prompt).not.toContain('Filtered Questions');
+    });
+
+    it('should not include validation section when context is empty', () => {
+      const prompt = buildBatchAnswersContinuationPrompt([mockQuestion], 1, '/path/plan.md', undefined, emptyValidationContext);
+
+      expect(prompt).not.toContain('Validation Context');
+    });
+
+    it('should include validation context for Stage 1', () => {
+      const prompt = buildBatchAnswersContinuationPrompt([mockQuestion], 1, '/path/plan.md', undefined, fullValidationContext);
+
+      expect(prompt).toContain('Validation Context');
+      expect(prompt).toContain('Filtered Questions');
+      expect(prompt).toContain('Repurposed Questions');
+    });
+
+    it('should include validation context for Stage 2', () => {
+      const prompt = buildBatchAnswersContinuationPrompt([mockQuestion], 2, '/path/plan.md', undefined, fullValidationContext);
+
+      expect(prompt).toContain('Validation Context');
+      expect(prompt).toContain('Filtered Questions');
+      expect(prompt).toContain('Repurposed Questions');
+    });
+
+    it('should include validation context after remarks', () => {
+      const prompt = buildBatchAnswersContinuationPrompt([mockQuestion], 1, '/path/plan.md', 'Please consider security', fullValidationContext);
+
+      // Check order: remarks should come before validation context
+      const remarksIndex = prompt.indexOf('Please consider security');
+      const validationIndex = prompt.indexOf('Validation Context');
+
+      expect(remarksIndex).toBeGreaterThan(-1);
+      expect(validationIndex).toBeGreaterThan(-1);
+      expect(remarksIndex).toBeLessThan(validationIndex);
+    });
+
+    it('should include all filtered question details', () => {
+      const prompt = buildBatchAnswersContinuationPrompt([mockQuestion], 1, '/path/plan.md', undefined, validationContextWithFiltered);
+
+      expect(prompt).toContain('What database should we use?');
+      expect(prompt).toContain('Already determined from codebase - using PostgreSQL');
+      expect(prompt).toContain('Should we use TypeScript?');
+      expect(prompt).toContain('Project already uses TypeScript');
+    });
+
+    it('should include all repurposed question details', () => {
+      const prompt = buildBatchAnswersContinuationPrompt([mockQuestion], 1, '/path/plan.md', undefined, validationContextWithRepurposed);
+
+      expect(prompt).toContain('What tech stack should we use?');
+      expect(prompt).toContain('Question too broad - split into specific questions');
+      expect(prompt).toContain('What frontend framework should we use?');
+      expect(prompt).toContain('What backend language should we use?');
+    });
+
+    it('should include summary counts', () => {
+      const prompt = buildBatchAnswersContinuationPrompt([mockQuestion], 2, '/path/plan.md', undefined, fullValidationContext);
+
+      expect(prompt).toContain('Total questions processed: 10');
+      expect(prompt).toContain('Passed: 5');
+      expect(prompt).toContain('Filtered: 3');
+      expect(prompt).toContain('Repurposed: 2');
+    });
+
+    it('should still include standard prompt sections with validation context', () => {
+      const prompt = buildBatchAnswersContinuationPrompt([mockQuestion], 1, '/path/plan.md', undefined, fullValidationContext);
+
+      // Should still have the question and answer
+      expect(prompt).toContain('Which auth approach should we use?');
+      expect(prompt).toContain('Use JWT with refresh tokens');
+
+      // Should still have the DECISION_NEEDED marker format
+      expect(prompt).toContain('[DECISION_NEEDED');
+      expect(prompt).toContain('[PLAN_STEP]');
+    });
+
+    it('should work with undefined validationContext parameter (backward compatibility)', () => {
+      // Call without the new parameter - should work as before
+      const prompt = buildBatchAnswersContinuationPrompt([mockQuestion], 1, '/path/plan.md', 'remarks');
+
+      expect(prompt).toContain('Which auth approach should we use?');
+      expect(prompt).toContain('remarks');
+      expect(prompt).not.toContain('Validation Context');
     });
   });
 });

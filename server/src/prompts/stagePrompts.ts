@@ -1,5 +1,6 @@
-import { Session, Plan, PlanStep, Question } from '@claude-code-web/shared';
+import { Session, Plan, PlanStep, Question, ValidationContext } from '@claude-code-web/shared';
 import { escapeMarkers } from '../utils/sanitizeInput';
+import { hasValidationContext } from '../utils/validationContextExtractor';
 
 /**
  * Sanitize user-provided session fields to prevent prompt injection.
@@ -442,6 +443,60 @@ Question about the feedback...
 }
 
 /**
+ * Format validation context as a markdown section for inclusion in prompts.
+ * Shows summary counts, filtered questions with reasons, and repurposed question mappings.
+ */
+export function formatValidationContextSection(validationContext?: ValidationContext | null): string {
+  if (!validationContext || !hasValidationContext(validationContext)) {
+    return '';
+  }
+
+  const { summary, filteredQuestions, repurposedQuestions } = validationContext;
+
+  let section = `\n\n## Validation Context
+During this session, some questions were filtered or repurposed by the validation system.
+
+### Summary
+- Total questions processed: ${summary.totalProcessed}
+- Passed: ${summary.passedCount}
+- Filtered: ${summary.filteredCount}
+- Repurposed: ${summary.repurposedCount}`;
+
+  // Add filtered questions section if any exist
+  if (filteredQuestions.length > 0) {
+    section += `
+
+### Filtered Questions
+The following questions were filtered out (not shown to user):
+${filteredQuestions.map((q, i) => `${i + 1}. **"${escapeMarkers(q.questionText)}"**
+   - Reason: ${escapeMarkers(q.reason)}`).join('\n')}`;
+  }
+
+  // Add repurposed questions section if any exist
+  if (repurposedQuestions.length > 0) {
+    section += `
+
+### Repurposed Questions
+The following questions were transformed into different questions:
+${repurposedQuestions.map((q, i) => {
+  const newQuestionsText = q.newQuestionTexts.length > 0
+    ? q.newQuestionTexts.map(t => `     - "${escapeMarkers(t)}"`).join('\n')
+    : '     - (no replacement questions)';
+  return `${i + 1}. **Original:** "${escapeMarkers(q.originalQuestionText)}"
+   - Reason: ${escapeMarkers(q.reason)}
+   - Replaced with:
+${newQuestionsText}`;
+}).join('\n')}`;
+  }
+
+  section += `
+
+**Note:** Consider this context when processing the user's answers. The filtered/repurposed questions indicate areas that were deemed less relevant or needed reformulation.`;
+
+  return section;
+}
+
+/**
  * Build prompt to continue after user answers a batch of questions.
  * Each review iteration has progressive complexity questions.
  * The server sends this prompt when all questions from the same batch are answered.
@@ -450,7 +505,8 @@ export function buildBatchAnswersContinuationPrompt(
   answeredQuestions: Question[],
   currentStage: number,
   claudePlanFilePath?: string | null,
-  remarks?: string
+  remarks?: string,
+  validationContext?: ValidationContext | null
 ): string {
   // Sanitize user answers to prevent marker injection
   const answers = answeredQuestions.map(q => {
@@ -465,10 +521,13 @@ export function buildBatchAnswersContinuationPrompt(
     ? `\n\n**Additional concerns/requested changes from user:**\n${escapeMarkers(remarks.trim())}`
     : '';
 
+  // Format validation context section if provided
+  const validationSection = formatValidationContextSection(validationContext);
+
   if (currentStage === 1) {
     return `The user answered your discovery questions:
 
-${answers}${remarksSection}
+${answers}${remarksSection}${validationSection}
 
 Continue with the discovery process based on these answers.
 
@@ -489,7 +548,7 @@ When you have enough information:
   // Stage 2 continuation
   return `The user answered your review questions:
 
-${answers}${remarksSection}
+${answers}${remarksSection}${validationSection}
 
 Continue with the review process based on these answers.${remarks?.trim() ? ' Pay special attention to the additional concerns raised by the user.' : ''}
 
@@ -1174,7 +1233,8 @@ Title: ${prInfo.title}
  */
 export function buildBatchAnswersContinuationPromptLean(
   answeredQuestions: Question[],
-  currentStage: number
+  currentStage: number,
+  validationContext?: ValidationContext | null
 ): string {
   const answers = answeredQuestions.map(q => {
     const answerText = typeof q.answer?.value === 'string'
@@ -1183,9 +1243,12 @@ export function buildBatchAnswersContinuationPromptLean(
     return `**Q:** ${q.questionText}\n**A:** ${answerText}`;
   }).join('\n\n');
 
+  // Format validation context section if provided (abbreviated for lean version)
+  const validationSection = formatValidationContextSection(validationContext);
+
   if (currentStage === 1) {
-    return `User answers:\n\n${answers}\n\nContinue discovery. More questions → [DECISION_NEEDED]. Ready → generate plan with [PLAN_STEP] markers.`;
+    return `User answers:\n\n${answers}${validationSection}\n\nContinue discovery. More questions → [DECISION_NEEDED]. Ready → generate plan with [PLAN_STEP] markers.`;
   }
 
-  return `User answers:\n\n${answers}\n\nContinue review. More issues → [DECISION_NEEDED]. All resolved → [PLAN_APPROVED].`;
+  return `User answers:\n\n${answers}${validationSection}\n\nContinue review. More issues → [DECISION_NEEDED]. All resolved → [PLAN_APPROVED].`;
 }
