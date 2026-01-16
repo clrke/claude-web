@@ -461,7 +461,7 @@ export default function NewSession() {
             disabled={isSubmitting}
             className="flex-1 px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed rounded-lg font-medium transition-colors"
           >
-            {isSubmitting ? 'Creating...' : 'Start Discovery'}
+            {isSubmitting ? 'Creating...' : activeSession ? 'Queue Session' : 'Start Discovery'}
           </button>
         </div>
       </form>

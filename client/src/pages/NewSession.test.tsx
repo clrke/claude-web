@@ -141,6 +141,87 @@ describe('NewSession', () => {
     expect(screen.getByPlaceholderText(/describe the feature/i)).toBeRequired();
   });
 
+  describe('button text', () => {
+    it('should show "Start Discovery" when no active session exists', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({
+            ok: false,
+            json: () => Promise.resolve({}),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({}),
+        });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      // Type in project path to trigger check-queue call
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+
+      // Wait for the debounced check-queue call to complete
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/check-queue'));
+      }, { timeout: 1000 });
+
+      // Button should show "Start Discovery"
+      expect(screen.getByRole('button', { name: /start discovery/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /queue session/i })).not.toBeInTheDocument();
+    });
+
+    it('should show "Queue Session" when an active session exists', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              activeSession: { id: 'session-1', title: 'Active Feature', status: 'running' },
+              queuedCount: 0,
+            }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({
+            ok: false,
+            json: () => Promise.resolve({}),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({}),
+        });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      // Type in project path to trigger check-queue call
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+
+      // Wait for the debounced check-queue call to complete
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/check-queue'));
+      }, { timeout: 1000 });
+
+      // Button should show "Queue Session"
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /queue session/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('button', { name: /start discovery/i })).not.toBeInTheDocument();
+    });
+  });
+
   describe('accessibility', () => {
     it('should have proper labels for all form fields', () => {
       renderWithRouter(<NewSession />);
