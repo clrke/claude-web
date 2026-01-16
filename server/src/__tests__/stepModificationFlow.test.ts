@@ -7,8 +7,16 @@
  * - Stage 2 modifies steps (add, edit, remove)
  * - Stage 3 picks up changes and only re-implements modified/added steps
  * - Unchanged completed steps are skipped via contentHash comparison
+ *
+ * This test file covers two approaches for step modification:
+ * 1. Marker-based: Claude outputs [STEP_MODIFICATIONS] and [REMOVE_STEPS] markers
+ * 2. Direct-edit: Claude uses the Edit tool to modify plan.md directly
+ *
+ * Both approaches are supported and can be used together.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type { Session, Plan, PlanStep } from '@claude-code-web/shared';
 import {
   processStepModifications,
@@ -21,6 +29,7 @@ import {
   isStepContentUnchanged,
   setStepContentHash,
 } from '../utils/stepContentHash';
+import { syncPlanFromMarkdown } from '../utils/syncPlanFromMarkdown';
 import { StepModificationContext } from '../prompts/stagePrompts';
 
 // =============================================================================
@@ -944,6 +953,323 @@ Description
       };
 
       expect(computeStepHash(step1)).toBe(computeStepHash(step2));
+    });
+  });
+});
+
+// =============================================================================
+// Direct-Edit Approach: Claude uses Edit tool on plan.md
+// =============================================================================
+
+describe('Step Modification Flow - Direct Edit Approach', () => {
+  let testDir: string;
+  let planMdPath: string;
+
+  beforeEach(() => {
+    testDir = path.join('/tmp', `step-mod-direct-edit-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+    fs.mkdirSync(testDir, { recursive: true });
+    planMdPath = path.join(testDir, 'plan.md');
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  // Helper to create plan.md content
+  function createPlanMarkdown(steps: Array<{ id: string; title: string; description: string; parentId?: string | null }>): string {
+    return steps.map(step => {
+      const parentAttr = step.parentId ? ` parent="${step.parentId}"` : '';
+      return `[PLAN_STEP id="${step.id}"${parentAttr}]
+${step.title}
+${step.description}
+[/PLAN_STEP]`;
+    }).join('\n\n');
+  }
+
+  describe('syncPlanFromMarkdown integration with step modification flow', () => {
+    it('should sync edited step and mark for re-implementation', async () => {
+      // Initial completed step with contentHash
+      const step = createMockStep('step-1', null, 'completed');
+      setStepContentHash(step);
+      const plan = createMockPlan([step]);
+
+      // Verify step is unchanged initially
+      expect(isStepContentUnchanged(step)).toBe(true);
+
+      // Claude edits plan.md via Edit tool
+      const editedMarkdown = createPlanMarkdown([
+        { id: 'step-1', title: 'Updated Title', description: 'Updated description with new details' },
+      ]);
+      fs.writeFileSync(planMdPath, editedMarkdown, 'utf8');
+
+      // Sync plan.json from plan.md
+      const syncResult = await syncPlanFromMarkdown(planMdPath, plan);
+
+      expect(syncResult).not.toBeNull();
+      expect(syncResult!.syncResult.changed).toBe(true);
+      expect(syncResult!.syncResult.updatedCount).toBe(1);
+
+      // After sync, the updated step should be marked for re-implementation
+      const updatedStep = syncResult!.updatedPlan.steps[0];
+      expect(updatedStep.status).toBe('pending'); // Reset from completed
+      expect(updatedStep.contentHash).toBeUndefined(); // Hash cleared
+      expect(isStepContentUnchanged(updatedStep)).toBe(false); // Will be re-implemented
+    });
+
+    it('should add new step from edited plan.md', async () => {
+      const existingStep = createMockStep('step-1', null, 'completed');
+      setStepContentHash(existingStep);
+      const plan = createMockPlan([existingStep]);
+
+      // Claude adds a new step via Edit tool
+      const editedMarkdown = createPlanMarkdown([
+        { id: 'step-1', title: 'Step step-1 Title', description: 'This is the description for step step-1. It contains implementation details.' },
+        { id: 'step-2', title: 'New Step', description: 'Added during Stage 2 review' },
+      ]);
+      fs.writeFileSync(planMdPath, editedMarkdown, 'utf8');
+
+      const syncResult = await syncPlanFromMarkdown(planMdPath, plan);
+
+      expect(syncResult!.syncResult.changed).toBe(true);
+      expect(syncResult!.syncResult.addedCount).toBe(1);
+      expect(syncResult!.syncResult.addedStepIds).toContain('step-2');
+
+      // New step should be pending without contentHash
+      const newStep = syncResult!.updatedPlan.steps.find(s => s.id === 'step-2');
+      expect(newStep).toBeDefined();
+      expect(newStep!.status).toBe('pending');
+      expect(isStepContentUnchanged(newStep!)).toBe(false);
+
+      // Existing step should remain unchanged
+      const originalStep = syncResult!.updatedPlan.steps.find(s => s.id === 'step-1');
+      expect(originalStep!.status).toBe('completed');
+    });
+
+    it('should remove step from edited plan.md', async () => {
+      const steps = [
+        createMockStep('step-1', null, 'completed'),
+        createMockStep('step-2', null, 'completed'),
+        createMockStep('step-3', null, 'completed'),
+      ];
+      steps.forEach(s => setStepContentHash(s));
+      const plan = createMockPlan(steps);
+
+      // Claude removes step-2 via Edit tool
+      const editedMarkdown = createPlanMarkdown([
+        { id: 'step-1', title: 'Step step-1 Title', description: 'This is the description for step step-1. It contains implementation details.' },
+        { id: 'step-3', title: 'Step step-3 Title', description: 'This is the description for step step-3. It contains implementation details.' },
+      ]);
+      fs.writeFileSync(planMdPath, editedMarkdown, 'utf8');
+
+      const syncResult = await syncPlanFromMarkdown(planMdPath, plan);
+
+      expect(syncResult!.syncResult.changed).toBe(true);
+      expect(syncResult!.syncResult.removedCount).toBe(1);
+      expect(syncResult!.syncResult.removedStepIds).toContain('step-2');
+      expect(syncResult!.updatedPlan.steps).toHaveLength(2);
+    });
+
+    it('should handle mixed operations: edit, add, remove', async () => {
+      const steps = [
+        createMockStep('step-1', null, 'completed'),
+        createMockStep('step-2', null, 'completed'),
+        createMockStep('step-3', null, 'pending'),
+      ];
+      steps.filter(s => s.status === 'completed').forEach(s => setStepContentHash(s));
+      const plan = createMockPlan(steps);
+
+      // Claude makes multiple changes via Edit tool:
+      // - Edit step-1 (title change)
+      // - Remove step-2
+      // - Add step-4
+      const editedMarkdown = createPlanMarkdown([
+        { id: 'step-1', title: 'Updated Step 1', description: 'This is the description for step step-1. It contains implementation details.' },
+        { id: 'step-3', title: 'Step step-3 Title', description: 'This is the description for step step-3. It contains implementation details.' },
+        { id: 'step-4', title: 'New Step 4', description: 'Added for additional functionality' },
+      ]);
+      fs.writeFileSync(planMdPath, editedMarkdown, 'utf8');
+
+      const syncResult = await syncPlanFromMarkdown(planMdPath, plan);
+
+      expect(syncResult!.syncResult.changed).toBe(true);
+      expect(syncResult!.syncResult.updatedCount).toBe(1);
+      expect(syncResult!.syncResult.addedCount).toBe(1);
+      expect(syncResult!.syncResult.removedCount).toBe(1);
+
+      const updatedPlan = syncResult!.updatedPlan;
+      expect(updatedPlan.steps).toHaveLength(3);
+
+      // step-1: edited, should be reset to pending
+      const step1 = updatedPlan.steps.find(s => s.id === 'step-1');
+      expect(step1!.title).toBe('Updated Step 1');
+      expect(step1!.status).toBe('pending');
+      expect(isStepContentUnchanged(step1!)).toBe(false);
+
+      // step-2: removed
+      expect(updatedPlan.steps.find(s => s.id === 'step-2')).toBeUndefined();
+
+      // step-3: unchanged (was pending, still pending)
+      const step3 = updatedPlan.steps.find(s => s.id === 'step-3');
+      expect(step3!.status).toBe('pending');
+
+      // step-4: added
+      const step4 = updatedPlan.steps.find(s => s.id === 'step-4');
+      expect(step4).toBeDefined();
+      expect(step4!.status).toBe('pending');
+    });
+  });
+
+  describe('comparing direct-edit vs marker-based approaches', () => {
+    it('should produce equivalent results for same logical changes', async () => {
+      // Same initial state
+      const step = createMockStep('step-1', null, 'completed');
+      setStepContentHash(step);
+      const plan1 = createMockPlan([step]);
+      const plan2 = createMockPlan([{ ...step, contentHash: step.contentHash }]);
+
+      // Approach 1: Direct edit via plan.md
+      const editedMarkdown = createPlanMarkdown([
+        { id: 'step-1', title: 'Modified Title', description: 'Modified description' },
+        { id: 'step-2', title: 'New Step', description: 'Added step' },
+      ]);
+      fs.writeFileSync(planMdPath, editedMarkdown, 'utf8');
+      const directEditResult = await syncPlanFromMarkdown(planMdPath, plan1);
+
+      // Approach 2: Marker-based
+      const claudeOutput = `
+[STEP_MODIFICATIONS]
+modified: ["step-1"]
+added: ["step-2"]
+[/STEP_MODIFICATIONS]
+
+[PLAN_STEP id="step-1" parentId="null"]
+Modified Title
+Modified description
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-2" parentId="null"]
+New Step
+Added step
+[/PLAN_STEP]
+`;
+      const markerResult = processStepModifications(claudeOutput, plan2.steps, ['step-2']);
+
+      // Both approaches should identify the same changes
+      expect(directEditResult!.syncResult.updatedStepIds).toEqual(markerResult.modifications.modifiedStepIds);
+      expect(directEditResult!.syncResult.addedStepIds).toEqual(markerResult.modifications.addedStepIds);
+    });
+
+    it('should allow both approaches to coexist', async () => {
+      // Direct-edit approach doesn't prevent marker-based detection
+      const steps = [
+        createMockStep('step-1', null, 'pending'),
+        createMockStep('step-2', null, 'pending'),
+      ];
+      const plan = createMockPlan(steps);
+
+      // Claude could theoretically use both approaches
+      // Direct edit on plan.md
+      const markdown = createPlanMarkdown([
+        { id: 'step-1', title: 'Step step-1 Title', description: 'This is the description for step step-1. It contains implementation details.' },
+        { id: 'step-2', title: 'Modified Step 2', description: 'Updated via Edit tool' },
+      ]);
+      fs.writeFileSync(planMdPath, markdown, 'utf8');
+
+      // Plus marker output
+      const claudeOutput = `
+[REMOVE_STEPS]
+["step-3"]
+[/REMOVE_STEPS]
+`;
+
+      // Sync handles direct edits
+      const syncResult = await syncPlanFromMarkdown(planMdPath, plan);
+      expect(syncResult!.syncResult.updatedCount).toBe(1);
+
+      // Marker parsing still works independently (though step-3 doesn't exist, it will error)
+      const markerResult = processStepModifications(claudeOutput, steps);
+      expect(markerResult.isValid).toBe(false); // step-3 doesn't exist
+    });
+  });
+
+  describe('Stage 3 execution with synced plan', () => {
+    it('should correctly identify steps to skip vs re-implement after sync', async () => {
+      // Setup: 3 completed steps with hashes
+      const steps = [
+        createMockStep('step-1', null, 'completed'),
+        createMockStep('step-2', null, 'completed'),
+        createMockStep('step-3', null, 'completed'),
+      ];
+      steps.forEach(s => setStepContentHash(s));
+      const plan = createMockPlan(steps);
+
+      // Claude edits step-2 via Edit tool
+      const editedMarkdown = createPlanMarkdown([
+        { id: 'step-1', title: 'Step step-1 Title', description: 'This is the description for step step-1. It contains implementation details.' },
+        { id: 'step-2', title: 'Completely Rewritten Step 2', description: 'New implementation approach for step 2' },
+        { id: 'step-3', title: 'Step step-3 Title', description: 'This is the description for step step-3. It contains implementation details.' },
+      ]);
+      fs.writeFileSync(planMdPath, editedMarkdown, 'utf8');
+
+      // Sync
+      const syncResult = await syncPlanFromMarkdown(planMdPath, plan);
+      const updatedPlan = syncResult!.updatedPlan;
+
+      // Stage 3 would check each step
+      const executionPlan = updatedPlan.steps.map(step => ({
+        id: step.id,
+        shouldSkip: isStepContentUnchanged(step),
+        reason: isStepContentUnchanged(step)
+          ? 'Content unchanged, skip re-implementation'
+          : step.contentHash === undefined
+          ? 'Hash cleared (modified/new), must implement'
+          : 'Hash mismatch, must re-implement',
+      }));
+
+      // step-1: unchanged, should skip
+      expect(executionPlan.find(e => e.id === 'step-1')?.shouldSkip).toBe(true);
+
+      // step-2: edited, should NOT skip
+      expect(executionPlan.find(e => e.id === 'step-2')?.shouldSkip).toBe(false);
+
+      // step-3: unchanged, should skip
+      expect(executionPlan.find(e => e.id === 'step-3')?.shouldSkip).toBe(true);
+    });
+
+    it('should handle planVersion increment after sync', async () => {
+      const plan = createMockPlan([
+        createMockStep('step-1', null, 'pending'),
+      ], { planVersion: 5 });
+
+      const editedMarkdown = createPlanMarkdown([
+        { id: 'step-1', title: 'Updated Title', description: 'Updated description' },
+      ]);
+      fs.writeFileSync(planMdPath, editedMarkdown, 'utf8');
+
+      const syncResult = await syncPlanFromMarkdown(planMdPath, plan);
+
+      // planVersion should be incremented
+      expect(syncResult!.updatedPlan.planVersion).toBe(6);
+    });
+
+    it('should not increment planVersion when no changes detected', async () => {
+      const step = createMockStep('step-1', null, 'pending');
+      const plan = createMockPlan([step], { planVersion: 5 });
+
+      // plan.md matches plan.json exactly
+      const markdown = createPlanMarkdown([
+        { id: 'step-1', title: step.title, description: step.description },
+      ]);
+      fs.writeFileSync(planMdPath, markdown, 'utf8');
+
+      const syncResult = await syncPlanFromMarkdown(planMdPath, plan);
+
+      expect(syncResult!.syncResult.changed).toBe(false);
+      expect(syncResult!.updatedPlan.planVersion).toBe(5);
     });
   });
 });
