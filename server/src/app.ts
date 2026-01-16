@@ -49,6 +49,7 @@ import {
 } from './utils/stateVerification';
 import { extractValidationContext } from './utils/validationContextExtractor';
 import type { ValidationLog } from './services/DecisionValidator';
+import type { ValidationContext } from '@claude-code-web/shared';
 import * as packageJson from '../package.json';
 
 const startTime = Date.now();
