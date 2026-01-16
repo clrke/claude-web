@@ -942,4 +942,185 @@ describe('API Routes', () => {
       expect(response.body.error).toMatch(/plan not found/i);
     });
   });
+
+  describe('PUT /api/sessions/:projectId/queue-order', () => {
+    const projectPath = '/test/queue-project';
+    let projectId: string;
+
+    beforeEach(async () => {
+      projectId = sessionManager.getProjectId(projectPath);
+    });
+
+    it('should reorder queued sessions successfully', async () => {
+      // Create active session
+      await sessionManager.createSession({
+        title: 'Active Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      // Create queued sessions
+      const second = await sessionManager.createSession({
+        title: 'Second Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      const third = await sessionManager.createSession({
+        title: 'Third Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      // Reorder: third first, then second
+      const response = await request(app)
+        .put(`/api/sessions/${projectId}/queue-order`)
+        .send({ orderedFeatureIds: [third.featureId, second.featureId] });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveLength(2);
+      expect(response.body[0].featureId).toBe(third.featureId);
+      expect(response.body[0].queuePosition).toBe(1);
+      expect(response.body[1].featureId).toBe(second.featureId);
+      expect(response.body[1].queuePosition).toBe(2);
+    });
+
+    it('should return 400 for invalid feature IDs', async () => {
+      // Create active session
+      await sessionManager.createSession({
+        title: 'Active Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      // Create queued session
+      await sessionManager.createSession({
+        title: 'Queued Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      const response = await request(app)
+        .put(`/api/sessions/${projectId}/queue-order`)
+        .send({ orderedFeatureIds: ['non-existent-feature'] });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/not queued sessions/i);
+    });
+
+    it('should return 400 for non-queued session IDs', async () => {
+      // Create active session
+      const active = await sessionManager.createSession({
+        title: 'Active Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      // Create queued session
+      await sessionManager.createSession({
+        title: 'Queued Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      // Try to reorder with active session ID
+      const response = await request(app)
+        .put(`/api/sessions/${projectId}/queue-order`)
+        .send({ orderedFeatureIds: [active.featureId] });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/not queued sessions/i);
+    });
+
+    it('should handle duplicate feature IDs gracefully', async () => {
+      // Create active session
+      await sessionManager.createSession({
+        title: 'Active Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      // Create queued sessions
+      const second = await sessionManager.createSession({
+        title: 'Second Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      const third = await sessionManager.createSession({
+        title: 'Third Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      // Send duplicates - should deduplicate
+      const response = await request(app)
+        .put(`/api/sessions/${projectId}/queue-order`)
+        .send({ orderedFeatureIds: [third.featureId, second.featureId, third.featureId] });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveLength(2);
+      expect(response.body[0].featureId).toBe(third.featureId);
+      expect(response.body[1].featureId).toBe(second.featureId);
+    });
+
+    it('should return empty array when no queued sessions', async () => {
+      // Create only an active session (no queued)
+      await sessionManager.createSession({
+        title: 'Only Session',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      const response = await request(app)
+        .put(`/api/sessions/${projectId}/queue-order`)
+        .send({ orderedFeatureIds: [] });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([]);
+    });
+
+    it('should return 400 for missing orderedFeatureIds', async () => {
+      const response = await request(app)
+        .put(`/api/sessions/${projectId}/queue-order`)
+        .send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/validation failed/i);
+    });
+
+    it('should persist reordering to storage', async () => {
+      // Create active session
+      await sessionManager.createSession({
+        title: 'Active Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      // Create queued sessions
+      const second = await sessionManager.createSession({
+        title: 'Second Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      const third = await sessionManager.createSession({
+        title: 'Third Feature',
+        featureDescription: 'Test',
+        projectPath,
+      });
+
+      // Reorder
+      await request(app)
+        .put(`/api/sessions/${projectId}/queue-order`)
+        .send({ orderedFeatureIds: [third.featureId, second.featureId] });
+
+      // Verify persistence by reading sessions directly
+      const updatedSecond = await sessionManager.getSession(projectId, second.featureId);
+      const updatedThird = await sessionManager.getSession(projectId, third.featureId);
+
+      expect(updatedThird!.queuePosition).toBe(1);
+      expect(updatedSecond!.queuePosition).toBe(2);
+    });
+  });
 });

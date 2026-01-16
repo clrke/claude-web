@@ -4,6 +4,7 @@ import {
   StageTransitionInputSchema,
   AnswerQuestionInputSchema,
   RequestChangesInputSchema,
+  QueueReorderInputSchema,
 } from '../../server/src/validation/schemas';
 
 describe('Validation Schemas', () => {
@@ -342,6 +343,61 @@ describe('Validation Schemas', () => {
         feedback: 'a'.repeat(10001),
       });
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('QueueReorderInputSchema', () => {
+    it('should accept valid orderedFeatureIds array', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: ['feature-one', 'feature-two', 'feature-three'],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.orderedFeatureIds).toHaveLength(3);
+      }
+    });
+
+    it('should accept empty orderedFeatureIds array', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: [],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.orderedFeatureIds).toEqual([]);
+      }
+    });
+
+    it('should reject missing orderedFeatureIds', () => {
+      const result = QueueReorderInputSchema.safeParse({});
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject non-array orderedFeatureIds', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: 'not-an-array',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject empty string feature IDs', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: ['valid', ''],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject feature IDs over 100 characters', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: ['a'.repeat(101)],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept feature IDs at max length (100 characters)', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: ['a'.repeat(100)],
+      });
+      expect(result.success).toBe(true);
     });
   });
 });

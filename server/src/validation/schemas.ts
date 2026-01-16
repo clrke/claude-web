@@ -121,6 +121,11 @@ export const RequestChangesInputSchema = z.object({
   feedback: z.string().min(1).max(10000),
 });
 
+// Queue reorder input schema
+export const QueueReorderInputSchema = z.object({
+  orderedFeatureIds: z.array(z.string().min(1).max(100)),
+});
+
 export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
 export type UpdateSessionInput = z.infer<typeof UpdateSessionInputSchema>;
 export type StageTransitionInput = z.infer<typeof StageTransitionInputSchema>;
@@ -128,3 +133,4 @@ export type AnswerQuestionInput = z.infer<typeof AnswerQuestionInputSchema>;
 export type BatchAnswersInput = z.infer<typeof BatchAnswersInputSchema>;
 export type RequestChangesInput = z.infer<typeof RequestChangesInputSchema>;
 export type UserPreferencesInput = z.infer<typeof UserPreferencesSchema>;
+export type QueueReorderInput = z.infer<typeof QueueReorderInputSchema>;

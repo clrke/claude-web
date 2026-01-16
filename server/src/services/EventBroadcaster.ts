@@ -227,4 +227,20 @@ export class EventBroadcaster {
     };
     this.io.to(room).emit('implementation.progress', event);
   }
+
+  /**
+   * Broadcast queue reordered event (for all sessions in project)
+   */
+  queueReordered(projectId: string, reorderedSessions: Session[]): void {
+    // Broadcast to project room (all clients watching this project)
+    this.io.to(projectId).emit('queue.reordered', {
+      projectId,
+      sessions: reorderedSessions.map(s => ({
+        featureId: s.featureId,
+        title: s.title,
+        queuePosition: s.queuePosition,
+      })),
+      timestamp: new Date().toISOString(),
+    });
+  }
 }
