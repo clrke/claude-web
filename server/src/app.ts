@@ -47,6 +47,8 @@ import {
   isPlanApproved,
   getHeadCommitSha,
 } from './utils/stateVerification';
+import { extractValidationContext } from './utils/validationContextExtractor';
+import type { ValidationLog } from './services/DecisionValidator';
 import * as packageJson from '../package.json';
 
 const startTime = Date.now();
@@ -2986,9 +2988,21 @@ After creating all steps, write the plan to a file and output:
         try {
           console.log(`All ${answeredQuestions.length} questions answered via batch, resuming Claude${remarks ? ' (with remarks)' : ''}`);
 
-          const prompt = buildBatchAnswersContinuationPrompt(answeredQuestions, session.currentStage, session.claudePlanFilePath, remarks);
           const sessionDir = `${projectId}/${featureId}`;
           const statusPath = `${sessionDir}/status.json`;
+
+          // Read validation logs to provide context about filtered/repurposed questions
+          const validationLogsPath = `${sessionDir}/validation-logs.json`;
+          const validationLogs = await storage.readJson<{ entries: ValidationLog[] }>(validationLogsPath);
+          const validationContext = extractValidationContext(validationLogs);
+
+          const prompt = buildBatchAnswersContinuationPrompt(
+            answeredQuestions,
+            session.currentStage,
+            session.claudePlanFilePath,
+            remarks,
+            validationContext
+          );
 
           // Update status to running
           const status = await storage.readJson<Record<string, unknown>>(statusPath);
