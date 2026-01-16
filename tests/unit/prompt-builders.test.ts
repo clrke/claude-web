@@ -13,6 +13,7 @@ import {
   buildStage5PromptLean,
   buildBatchAnswersContinuationPromptLean,
   formatValidationContextSection,
+  StepModificationContext,
 } from '../../server/src/prompts/stagePrompts';
 import { Session, Plan, Question, PlanStep, ValidationContext } from '@claude-code-web/shared';
 
@@ -1818,6 +1819,185 @@ describe('Validation Context in Prompts', () => {
       expect(prompt).toContain('Which auth approach should we use?');
       expect(prompt).toContain('remarks');
       expect(prompt).not.toContain('Validation Context');
+    });
+  });
+
+  describe('buildSingleStepPrompt with StepModificationContext', () => {
+    const mockSession: Session = {
+      version: '1.0',
+      id: 'test-session-id',
+      projectId: 'test-project',
+      featureId: 'add-auth',
+      title: 'Add User Authentication',
+      featureDescription: 'Implement JWT-based authentication for the API',
+      projectPath: '/Users/test/project',
+      acceptanceCriteria: [],
+      affectedFiles: [],
+      technicalNotes: '',
+      baseBranch: 'main',
+      featureBranch: 'feature/add-auth',
+      baseCommitSha: 'abc123',
+      status: 'discovery',
+      currentStage: 3,
+      replanningCount: 0,
+      claudeSessionId: null,
+      claudePlanFilePath: null,
+      currentPlanVersion: 1,
+      claudeStage3SessionId: null,
+      prUrl: null,
+      sessionExpiresAt: '2026-01-12T00:00:00Z',
+      createdAt: '2026-01-11T00:00:00Z',
+      updatedAt: '2026-01-11T00:00:00Z',
+    };
+
+    const mockPlan: Plan = {
+      version: '1.0',
+      planVersion: 1,
+      sessionId: 'test-session-id',
+      isApproved: true,
+      reviewCount: 1,
+      createdAt: '2026-01-11T00:00:00Z',
+      steps: [
+        {
+          id: 'step-1',
+          parentId: null,
+          orderIndex: 0,
+          title: 'Set up authentication module',
+          description: 'Create the auth module with login and logout handlers.',
+          status: 'completed',
+          metadata: {},
+        },
+        {
+          id: 'step-2',
+          parentId: 'step-1',
+          orderIndex: 1,
+          title: 'Implement JWT token generation',
+          description: 'Add JWT token creation and validation logic.',
+          status: 'pending',
+          metadata: {},
+        },
+      ],
+    };
+
+    const mockStep: PlanStep = mockPlan.steps[1];
+    const completedSteps = [{ id: 'step-1', title: 'Set up authentication module', summary: 'Created auth module' }];
+
+    it('should include modified step warning when wasModified is true', () => {
+      const modificationContext: StepModificationContext = {
+        wasModified: true,
+        wasAdded: false,
+      };
+
+      const prompt = buildSingleStepPrompt(mockSession, mockPlan, mockStep, completedSteps, modificationContext);
+
+      expect(prompt).toContain('MODIFIED STEP');
+      expect(prompt).toContain('This step was modified during plan revision');
+      expect(prompt).toContain('previous implementation is no longer valid');
+      expect(prompt).toContain('re-implement this step');
+    });
+
+    it('should include new step notice when wasAdded is true', () => {
+      const modificationContext: StepModificationContext = {
+        wasModified: false,
+        wasAdded: true,
+      };
+
+      const prompt = buildSingleStepPrompt(mockSession, mockPlan, mockStep, completedSteps, modificationContext);
+
+      expect(prompt).toContain('NEW STEP');
+      expect(prompt).toContain('This step was added during plan revision');
+      expect(prompt).toContain('has not been implemented before');
+    });
+
+    it('should include removed step IDs when removedStepIds is provided', () => {
+      const modificationContext: StepModificationContext = {
+        wasModified: true,
+        wasAdded: false,
+        removedStepIds: ['step-3', 'step-4'],
+      };
+
+      const prompt = buildSingleStepPrompt(mockSession, mockPlan, mockStep, completedSteps, modificationContext);
+
+      expect(prompt).toContain('following steps were removed');
+      expect(prompt).toContain('step-3');
+      expect(prompt).toContain('step-4');
+      expect(prompt).toContain('may need cleanup');
+    });
+
+    it('should not include modification section when modificationContext is undefined', () => {
+      const prompt = buildSingleStepPrompt(mockSession, mockPlan, mockStep, completedSteps, undefined);
+
+      expect(prompt).not.toContain('MODIFIED STEP');
+      expect(prompt).not.toContain('NEW STEP');
+      expect(prompt).not.toContain('steps were removed');
+    });
+
+    it('should not include modification section when wasModified and wasAdded are both false', () => {
+      const modificationContext: StepModificationContext = {
+        wasModified: false,
+        wasAdded: false,
+      };
+
+      const prompt = buildSingleStepPrompt(mockSession, mockPlan, mockStep, completedSteps, modificationContext);
+
+      expect(prompt).not.toContain('MODIFIED STEP');
+      expect(prompt).not.toContain('NEW STEP');
+    });
+
+    it('should prioritize wasModified over wasAdded when both are true', () => {
+      const modificationContext: StepModificationContext = {
+        wasModified: true,
+        wasAdded: true,
+      };
+
+      const prompt = buildSingleStepPrompt(mockSession, mockPlan, mockStep, completedSteps, modificationContext);
+
+      // wasModified check comes first in the if-else chain
+      expect(prompt).toContain('MODIFIED STEP');
+      expect(prompt).not.toContain('NEW STEP');
+    });
+
+    it('should include removed step cleanup notice even for new steps', () => {
+      const modificationContext: StepModificationContext = {
+        wasModified: false,
+        wasAdded: true,
+        removedStepIds: ['step-old'],
+      };
+
+      const prompt = buildSingleStepPrompt(mockSession, mockPlan, mockStep, completedSteps, modificationContext);
+
+      expect(prompt).toContain('NEW STEP');
+      expect(prompt).toContain('step-old');
+      expect(prompt).toContain('may need cleanup');
+    });
+
+    it('should still include standard prompt sections with modification context', () => {
+      const modificationContext: StepModificationContext = {
+        wasModified: true,
+        wasAdded: false,
+      };
+
+      const prompt = buildSingleStepPrompt(mockSession, mockPlan, mockStep, completedSteps, modificationContext);
+
+      // Standard sections should still be present
+      expect(prompt).toContain('Feature');
+      expect(prompt).toContain('Add User Authentication');
+      expect(prompt).toContain('Current Step');
+      expect(prompt).toContain('step-2');
+      expect(prompt).toContain('Implement JWT token generation');
+      expect(prompt).toContain('Execution Process');
+      expect(prompt).toContain('STEP_COMPLETE');
+    });
+
+    it('should preserve backward compatibility when called without modification context', () => {
+      // Old signature: (session, plan, step, completedSteps)
+      const prompt = buildSingleStepPrompt(mockSession, mockPlan, mockStep, completedSteps);
+
+      // Should work exactly as before
+      expect(prompt).toContain('step-2');
+      expect(prompt).toContain('Implement JWT token generation');
+      expect(prompt).not.toContain('MODIFIED STEP');
+      expect(prompt).not.toContain('NEW STEP');
     });
   });
 });

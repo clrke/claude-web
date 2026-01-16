@@ -818,14 +818,29 @@ interface CompletedStepSummary {
 }
 
 /**
+ * Context about step modifications during Stage 2 revision.
+ * Provides Claude with information about why a step is being re-implemented.
+ */
+export interface StepModificationContext {
+  /** Whether this step was modified during Stage 2 revision */
+  wasModified: boolean;
+  /** Whether this step was newly added during Stage 2 revision */
+  wasAdded: boolean;
+  /** IDs of steps that were removed and may have affected this step */
+  removedStepIds?: string[];
+}
+
+/**
  * Build a single-step implementation prompt for Stage 3.
  * Used for one-step-at-a-time execution (instead of all steps at once).
+ * @param modificationContext - Optional context about step modifications from Stage 2 revision
  */
 export function buildSingleStepPrompt(
   session: Session,
   plan: Plan,
   step: PlanStep,
-  completedSteps: CompletedStepSummary[]
+  completedSteps: CompletedStepSummary[],
+  modificationContext?: StepModificationContext
 ): string {
   // Sanitize user-provided fields to prevent prompt injection
   const sanitized = sanitizeSessionFields(session);
@@ -879,6 +894,19 @@ export function buildSingleStepPrompt(
     ? `\n**Dependency:** This step depends on [${step.parentId}] which is already completed.`
     : '';
 
+  // Build modification context section if this is a re-run after Stage 2 revision
+  let modificationSection = '';
+  if (modificationContext) {
+    if (modificationContext.wasModified) {
+      modificationSection = `\n\n**⚠️ MODIFIED STEP:** This step was modified during plan revision. The previous implementation is no longer valid. You must re-implement this step according to the updated description above.`;
+    } else if (modificationContext.wasAdded) {
+      modificationSection = `\n\n**🆕 NEW STEP:** This step was added during plan revision. This is a new step that has not been implemented before.`;
+    }
+    if (modificationContext.removedStepIds && modificationContext.removedStepIds.length > 0) {
+      modificationSection += `\n**Note:** The following steps were removed from the plan: ${modificationContext.removedStepIds.join(', ')}. Any code or tests related to these steps may need cleanup.`;
+    }
+  }
+
   return `You are implementing one step of an approved feature plan.
 
 ## Feature
@@ -892,7 +920,7 @@ ${planFileReference}
 ${completedSummary}
 
 ## Current Step: [${step.id}] ${step.title}${dependencyInfo}
-${step.description || 'No description provided.'}
+${step.description || 'No description provided.'}${modificationSection}
 
 ## Instructions
 

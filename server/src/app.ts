@@ -26,6 +26,7 @@ import {
   buildBatchAnswersContinuationPrompt,
   buildSingleStepPrompt,
   buildSingleStepPromptLean,
+  StepModificationContext,
 } from './prompts/stagePrompts';
 import { Session, PlanStep, DEFAULT_USER_PREFERENCES, UserPreferences } from '@claude-code-web/shared';
 import { ClaudeResult } from './services/ClaudeOrchestrator';
@@ -813,9 +814,19 @@ async function executeSingleStep(
   const testsRequired = plan.testRequirement?.required ?? true;
   const useLeanPrompt = session.claudeStage3SessionId !== null && completedSteps.length > 0;
 
+  // Build modification context if this step was modified/added during Stage 2 revision
+  let modificationContext: StepModificationContext | undefined;
+  if (session.modifiedStepIds?.includes(step.id) || session.addedStepIds?.includes(step.id)) {
+    modificationContext = {
+      wasModified: session.modifiedStepIds?.includes(step.id) ?? false,
+      wasAdded: session.addedStepIds?.includes(step.id) ?? false,
+      removedStepIds: session.removedStepIds,
+    };
+  }
+
   let prompt = useLeanPrompt
     ? buildSingleStepPromptLean(step, completedSteps, testsRequired)
-    : buildSingleStepPrompt(session, plan, step, completedSteps);
+    : buildSingleStepPrompt(session, plan, step, completedSteps, modificationContext);
 
   // Add resume context if this is a resume after blocker answer
   if (resumeContext) {
@@ -1286,6 +1297,16 @@ async function handleStage3Completion(
     console.log(`All ${plan.steps.length} steps completed (tests run per-step), transitioning to Stage 4 for ${session.featureId}`);
   } else {
     console.log(`All ${plan.steps.length} steps completed (tests not required: ${plan.testRequirement?.reason}), transitioning to Stage 4 for ${session.featureId}`);
+  }
+
+  // Clear modification tracking fields from Stage 2 revision (no longer needed)
+  if (session.modifiedStepIds || session.addedStepIds || session.removedStepIds) {
+    await sessionManager.updateSession(session.projectId, session.featureId, {
+      modifiedStepIds: undefined,
+      addedStepIds: undefined,
+      removedStepIds: undefined,
+    });
+    console.log(`Cleared step modification tracking for ${session.featureId}`);
   }
 
   // Transition to Stage 4
