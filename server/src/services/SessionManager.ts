@@ -201,7 +201,22 @@ export class SessionManager {
     const activeSession = await this.getActiveSessionForProject(projectId);
     const queuedSessions = await this.getQueuedSessions(projectId);
     const isQueued = activeSession !== null;
-    const queuePosition = isQueued ? queuedSessions.length + 1 : null;
+
+    // Calculate queue position based on insertAtPosition option
+    let queuePosition: number | null = null;
+    if (isQueued) {
+      const insertAt = input.insertAtPosition;
+      if (insertAt === 'front' || insertAt === 1) {
+        // Insert at front - will need to shift other sessions
+        queuePosition = 1;
+      } else if (typeof insertAt === 'number') {
+        // Insert at specific position (clamped to valid range)
+        queuePosition = Math.min(Math.max(1, insertAt), queuedSessions.length + 1);
+      } else {
+        // Default: 'end' or undefined - add to end of queue
+        queuePosition = queuedSessions.length + 1;
+      }
+    }
 
     // Create session directory
     await this.storage.ensureDir(sessionPath);
@@ -298,6 +313,19 @@ export class SessionManager {
       await this.storage.writeJson(`${projectId}/index.json`, projectIndex);
     }
 
+    // If inserting at a position other than the end, shift existing queued sessions
+    if (isQueued && queuePosition !== null && queuePosition <= queuedSessions.length) {
+      // Shift sessions that are at or after the insertion position
+      for (const queuedSession of queuedSessions) {
+        const pos = queuedSession.queuePosition;
+        if (pos != null && pos >= queuePosition) {
+          await this.updateSession(projectId, queuedSession.featureId, {
+            queuePosition: pos + 1,
+          });
+        }
+      }
+    }
+
     return session;
   }
 
@@ -388,20 +416,30 @@ export class SessionManager {
   }
 
   /**
-   * Get all queued sessions for a project, sorted by queue position
+   * Get all queued sessions for a project, sorted by priority (lowest queuePosition first).
+   * Sessions with lower queuePosition values have higher priority and will be processed first.
    */
   async getQueuedSessions(projectId: string): Promise<Session[]> {
     const sessions = await this.listSessions(projectId);
     return sessions
       .filter(s => s.status === 'queued')
-      .sort((a, b) => (a.queuePosition || 0) - (b.queuePosition || 0));
+      .sort((a, b) => {
+        // Sort by queuePosition ascending (lower position = higher priority)
+        // Null positions are treated as lowest priority (sorted to end)
+        const posA = a.queuePosition ?? Number.MAX_SAFE_INTEGER;
+        const posB = b.queuePosition ?? Number.MAX_SAFE_INTEGER;
+        return posA - posB;
+      });
   }
 
   /**
-   * Get the next queued session for a project (lowest queue position)
+   * Get the next queued session for a project (highest priority = lowest queuePosition).
+   * This is used by auto-selection to pick which session to start next when the
+   * current active session completes.
    */
   async getNextQueuedSession(projectId: string): Promise<Session | null> {
     const queuedSessions = await this.getQueuedSessions(projectId);
+    // Return the first session (lowest queuePosition = highest priority)
     return queuedSessions[0] || null;
   }
 
@@ -444,6 +482,57 @@ export class SessionManager {
         queuePosition: i + 1,
       });
     }
+  }
+
+  /**
+   * Reorder queued sessions for a project with specified feature ID order
+   * @param projectId - The project ID
+   * @param orderedFeatureIds - Array of feature IDs in desired order (highest priority first)
+   * @returns Array of updated queued sessions in new order
+   * @throws Error if any feature ID is not found or not in queued status
+   */
+  async reorderQueuedSessions(projectId: string, orderedFeatureIds: string[]): Promise<Session[]> {
+    // Deduplicate feature IDs while preserving order
+    const uniqueFeatureIds = [...new Set(orderedFeatureIds)];
+
+    // Use lock to ensure atomic queue operations
+    return this.storage.withLock(`${projectId}/queue.lock`, async () => {
+      // Get current queued sessions
+      const queuedSessions = await this.getQueuedSessions(projectId);
+      const queuedFeatureIds = new Set(queuedSessions.map(s => s.featureId));
+
+      // Validate all provided IDs are actually queued sessions
+      const invalidIds: string[] = [];
+      for (const featureId of uniqueFeatureIds) {
+        if (!queuedFeatureIds.has(featureId)) {
+          invalidIds.push(featureId);
+        }
+      }
+
+      if (invalidIds.length > 0) {
+        throw new Error(`Invalid feature IDs (not queued sessions): ${invalidIds.join(', ')}`);
+      }
+
+      // Build new order: provided IDs first (in order), then any remaining queued sessions
+      const orderedSet = new Set(uniqueFeatureIds);
+      const remainingQueued = queuedSessions
+        .filter(s => !orderedSet.has(s.featureId))
+        .map(s => s.featureId);
+
+      const finalOrder = [...uniqueFeatureIds, ...remainingQueued];
+
+      // Update queue positions
+      const updatedSessions: Session[] = [];
+      for (let i = 0; i < finalOrder.length; i++) {
+        const featureId = finalOrder[i];
+        const updated = await this.updateSession(projectId, featureId, {
+          queuePosition: i + 1,
+        });
+        updatedSessions.push(updated);
+      }
+
+      return updatedSessions;
+    });
   }
 
   async transitionStage(projectId: string, featureId: string, targetStage: number): Promise<Session> {

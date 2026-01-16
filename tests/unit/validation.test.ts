@@ -4,6 +4,7 @@ import {
   StageTransitionInputSchema,
   AnswerQuestionInputSchema,
   RequestChangesInputSchema,
+  QueueReorderInputSchema,
 } from '../../server/src/validation/schemas';
 
 describe('Validation Schemas', () => {
@@ -135,6 +136,92 @@ describe('Validation Schemas', () => {
       });
       expect(result.success).toBe(false);
     });
+
+    describe('insertAtPosition', () => {
+      it('should accept "front" as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 'front',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.insertAtPosition).toBe('front');
+        }
+      });
+
+      it('should accept "end" as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 'end',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.insertAtPosition).toBe('end');
+        }
+      });
+
+      it('should accept positive integer as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 5,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.insertAtPosition).toBe(5);
+        }
+      });
+
+      it('should accept 1 as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 1,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.insertAtPosition).toBe(1);
+        }
+      });
+
+      it('should reject 0 as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 0,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject negative number as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: -1,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject decimal number as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 1.5,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject invalid string as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 'middle',
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should allow omitting insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse(validInput);
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.insertAtPosition).toBeUndefined();
+        }
+      });
+    });
   });
 
   describe('UpdateSessionInputSchema', () => {
@@ -172,6 +259,95 @@ describe('Validation Schemas', () => {
         unknownField: 'value',
       });
       expect(result.success).toBe(false);
+    });
+
+    describe('queuePosition', () => {
+      it('should accept valid positive integer queuePosition', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: 1,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.queuePosition).toBe(1);
+        }
+      });
+
+      it('should accept queuePosition of 1 (minimum)', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: 1,
+        });
+        expect(result.success).toBe(true);
+      });
+
+      it('should accept large positive queuePosition', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: 100,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.queuePosition).toBe(100);
+        }
+      });
+
+      it('should accept null queuePosition (clears queue position)', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: null,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.queuePosition).toBeNull();
+        }
+      });
+
+      it('should accept undefined queuePosition (field not included)', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          status: 'planning',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.queuePosition).toBeUndefined();
+        }
+      });
+
+      it('should reject queuePosition of 0', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: 0,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject negative queuePosition', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: -1,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject non-integer queuePosition', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: 1.5,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject string queuePosition', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: '1',
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should accept queuePosition with other valid fields', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          status: 'paused',
+          queuePosition: 5,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.status).toBe('paused');
+          expect(result.data.queuePosition).toBe(5);
+        }
+      });
     });
   });
 
@@ -253,6 +429,61 @@ describe('Validation Schemas', () => {
         feedback: 'a'.repeat(10001),
       });
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('QueueReorderInputSchema', () => {
+    it('should accept valid orderedFeatureIds array', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: ['feature-one', 'feature-two', 'feature-three'],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.orderedFeatureIds).toHaveLength(3);
+      }
+    });
+
+    it('should accept empty orderedFeatureIds array', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: [],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.orderedFeatureIds).toEqual([]);
+      }
+    });
+
+    it('should reject missing orderedFeatureIds', () => {
+      const result = QueueReorderInputSchema.safeParse({});
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject non-array orderedFeatureIds', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: 'not-an-array',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject empty string feature IDs', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: ['valid', ''],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject feature IDs over 100 characters', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: ['a'.repeat(101)],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept feature IDs at max length (100 characters)', () => {
+      const result = QueueReorderInputSchema.safeParse({
+        orderedFeatureIds: ['a'.repeat(100)],
+      });
+      expect(result.success).toBe(true);
     });
   });
 });

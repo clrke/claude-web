@@ -76,6 +76,14 @@ export const CreateSessionInputSchema = z.object({
     .default('main'),
 
   preferences: UserPreferencesSchema.optional(),
+
+  // Queue position for new sessions (only used when session is being queued)
+  // 'front' = position 1, 'end' = after all existing queued sessions, number = specific position
+  insertAtPosition: z.union([
+    z.literal('front'),
+    z.literal('end'),
+    z.number().int().min(1),
+  ]).optional(),
 });
 
 // Update session input schema (partial, for PATCH requests)
@@ -85,6 +93,7 @@ export const UpdateSessionInputSchema = z.object({
   technicalNotes: z.string().max(5000).optional(),
   claudeSessionId: z.string().nullable().optional(),
   claudePlanFilePath: z.string().nullable().optional(),
+  queuePosition: z.number().int().min(1).nullable().optional(),
 }).strict();
 
 // Stage transition input schema
@@ -120,6 +129,11 @@ export const RequestChangesInputSchema = z.object({
   feedback: z.string().min(1).max(10000),
 });
 
+// Queue reorder input schema
+export const QueueReorderInputSchema = z.object({
+  orderedFeatureIds: z.array(z.string().min(1).max(100)).max(1000, 'Cannot reorder more than 1000 sessions at once'),
+});
+
 export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
 export type UpdateSessionInput = z.infer<typeof UpdateSessionInputSchema>;
 export type StageTransitionInput = z.infer<typeof StageTransitionInputSchema>;
@@ -127,3 +141,4 @@ export type AnswerQuestionInput = z.infer<typeof AnswerQuestionInputSchema>;
 export type BatchAnswersInput = z.infer<typeof BatchAnswersInputSchema>;
 export type RequestChangesInput = z.infer<typeof RequestChangesInputSchema>;
 export type UserPreferencesInput = z.infer<typeof UserPreferencesSchema>;
+export type QueueReorderInput = z.infer<typeof QueueReorderInputSchema>;

@@ -57,6 +57,10 @@ interface SessionState {
   questions: Question[];
   conversations: ConversationEntry[];
 
+  // Queue management (for Dashboard)
+  queuedSessions: Session[];
+  isReorderingQueue: boolean;
+
   // Real-time state
   executionStatus: ExecutionStatus | null;
   liveOutput: string;
@@ -84,6 +88,10 @@ interface SessionState {
   setError: (error: string | null) => void;
   reset: () => void;
 
+  // Queue actions
+  setQueuedSessions: (sessions: Session[]) => void;
+  updateQueuedSessionsFromEvent: (sessions: Array<{ featureId: string; title: string; queuePosition: number | null }>) => void;
+
   // Async actions
   fetchSession: (projectId: string, featureId: string) => Promise<void>;
   fetchConversations: (projectId: string, featureId: string) => Promise<void>;
@@ -92,6 +100,7 @@ interface SessionState {
   approvePlan: () => Promise<void>;
   requestPlanChanges: (feedback: string) => Promise<void>;
   retrySession: () => Promise<void>;
+  reorderQueue: (projectId: string, orderedFeatureIds: string[]) => Promise<void>;
 }
 
 const initialState = {
@@ -99,6 +108,8 @@ const initialState = {
   plan: null,
   questions: [],
   conversations: [],
+  queuedSessions: [] as Session[],
+  isReorderingQueue: false,
   executionStatus: null,
   liveOutput: '',
   isOutputComplete: true,
@@ -160,6 +171,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
   reset: () => set(initialState),
+
+  // Queue actions
+  setQueuedSessions: (queuedSessions) => set({ queuedSessions }),
+
+  updateQueuedSessionsFromEvent: (sessions) =>
+    set((state) => ({
+      queuedSessions: state.queuedSessions.map((s) => {
+        const update = sessions.find((u) => u.featureId === s.featureId);
+        if (update) {
+          return { ...s, queuePosition: update.queuePosition };
+        }
+        return s;
+      }).sort((a, b) => (a.queuePosition || 0) - (b.queuePosition || 0)),
+    })),
 
   fetchSession: async (projectId, featureId) => {
     set({ isLoading: true, error: null });
@@ -342,6 +367,49 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : 'Failed to retry session',
+      });
+      throw error;
+    }
+  },
+
+  reorderQueue: async (projectId, orderedFeatureIds) => {
+    const { queuedSessions } = get();
+
+    // Optimistic update: immediately reorder local state
+    const orderedSet = new Set(orderedFeatureIds);
+    const reorderedSessions = [
+      // First, sessions in the new order
+      ...orderedFeatureIds
+        .map((fid) => queuedSessions.find((s) => s.featureId === fid))
+        .filter((s): s is Session => s !== undefined),
+      // Then, any remaining sessions not in the reorder list
+      ...queuedSessions.filter((s) => !orderedSet.has(s.featureId)),
+    ].map((s, index) => ({ ...s, queuePosition: index + 1 }));
+
+    // Apply optimistic update
+    set({ queuedSessions: reorderedSessions, isReorderingQueue: true });
+
+    try {
+      const response = await fetch(`/api/sessions/${projectId}/queue-order`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedFeatureIds }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to reorder queue');
+      }
+
+      // Update with server response (authoritative)
+      const updatedSessions: Session[] = await response.json();
+      set({ queuedSessions: updatedSessions, isReorderingQueue: false });
+    } catch (error) {
+      // Rollback to original order on error
+      set({
+        queuedSessions,
+        isReorderingQueue: false,
+        error: error instanceof Error ? error.message : 'Failed to reorder queue',
       });
       throw error;
     }

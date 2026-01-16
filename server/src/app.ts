@@ -38,6 +38,7 @@ import {
   BatchAnswersInputSchema,
   RequestChangesInputSchema,
   UserPreferencesSchema,
+  QueueReorderInputSchema,
 } from './validation/schemas';
 import {
   isPlanApproved,
@@ -1995,6 +1996,31 @@ export function createApp(
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to check queue';
       res.status(500).json({ error: message });
+    }
+  });
+
+  // Reorder queued sessions for a project
+  app.put('/api/sessions/:projectId/queue-order', validate(QueueReorderInputSchema), async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const { orderedFeatureIds } = req.body;
+
+      const reorderedSessions = await sessionManager.reorderQueuedSessions(projectId, orderedFeatureIds);
+
+      // Broadcast queue reordered event
+      if (eventBroadcaster) {
+        eventBroadcaster.queueReordered(projectId, reorderedSessions);
+      }
+
+      res.json(reorderedSessions);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to reorder queue';
+      // Return 400 for validation errors (invalid feature IDs)
+      if (message.includes('not queued sessions')) {
+        res.status(400).json({ error: message });
+      } else {
+        res.status(500).json({ error: message });
+      }
     }
   });
 
