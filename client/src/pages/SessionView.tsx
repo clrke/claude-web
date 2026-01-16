@@ -15,6 +15,7 @@ import type {
   StageChangedEvent,
   StepStartedEvent,
   StepCompletedEvent,
+  SessionUpdatedEvent,
   Session,
   Plan,
   PlanStep,
@@ -277,6 +278,7 @@ export default function SessionView() {
     retrySession,
     backoutSession,
     resumeSession,
+    applySessionUpdate,
   } = useSessionStore();
 
   const navigate = useNavigate();
@@ -344,6 +346,10 @@ export default function SessionView() {
   const handleImplementationProgress = useCallback((data: ImplementationProgressEvent) => {
     setImplementationProgress(data);
   }, [setImplementationProgress]);
+
+  const handleSessionUpdated = useCallback((data: SessionUpdatedEvent) => {
+    applySessionUpdate(data.featureId, data.updatedFields, data.dataVersion);
+  }, [applySessionUpdate]);
 
   // Stage transition handler
   const handleTransition = useCallback(async (targetStage: number) => {
@@ -424,6 +430,7 @@ export default function SessionView() {
     socket.on('step.started', handleStepStarted);
     socket.on('step.completed', handleStepCompleted);
     socket.on('implementation.progress', handleImplementationProgress);
+    socket.on('session.updated', handleSessionUpdated);
 
     return () => {
       socket.off('execution.status', handleExecutionStatus);
@@ -434,9 +441,10 @@ export default function SessionView() {
       socket.off('step.started', handleStepStarted);
       socket.off('step.completed', handleStepCompleted);
       socket.off('implementation.progress', handleImplementationProgress);
+      socket.off('session.updated', handleSessionUpdated);
       disconnectFromSession(projectId, featureId);
     };
-  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handleStageChanged, handleStepStarted, handleStepCompleted, handleImplementationProgress]);
+  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handleStageChanged, handleStepStarted, handleStepCompleted, handleImplementationProgress, handleSessionUpdated]);
 
   if (isLoading) {
     return (
@@ -586,6 +594,19 @@ export default function SessionView() {
                   Resume Session
                 </>
               )}
+            </button>
+          )}
+          {/* Edit button - visible for queued sessions only */}
+          {session.status === 'queued' && (
+            <button
+              onClick={() => navigate(`/session/${session.projectId}/${session.featureId}/edit`)}
+              className="px-3 py-1 rounded-full text-sm transition-colors flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white"
+              data-testid="edit-session-button"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Edit
             </button>
           )}
         </div>

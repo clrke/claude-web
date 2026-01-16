@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent, ValidationAction, ExecutionSubState, StepProgress, BackoutAction, BackoutReason } from '@claude-code-web/shared';
+import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent, ValidationAction, ExecutionSubState, StepProgress, BackoutAction, BackoutReason, SessionUpdatedFields } from '@claude-code-web/shared';
 
 export type { ValidationAction } from '@claude-code-web/shared';
 
@@ -48,6 +48,23 @@ export interface ExecutionStatus {
   stepId?: string;
   /** Progress tracking for multi-step operations */
   progress?: StepProgress;
+}
+
+/**
+ * Result of editQueuedSession operation
+ */
+export interface EditQueuedSessionResult {
+  success: true;
+  session: Session;
+}
+
+/**
+ * Error result for version conflict (409) when editing queued session
+ */
+export interface EditQueuedSessionConflictError {
+  success: false;
+  error: 'VERSION_CONFLICT';
+  latestSession: Session;
 }
 
 interface SessionState {
@@ -103,6 +120,8 @@ interface SessionState {
   reorderQueue: (projectId: string, orderedFeatureIds: string[]) => Promise<void>;
   backoutSession: (projectId: string, featureId: string, action: BackoutAction, reason?: BackoutReason) => Promise<void>;
   resumeSession: (projectId: string, featureId: string) => Promise<void>;
+  editQueuedSession: (projectId: string, featureId: string, dataVersion: number, updates: SessionUpdatedFields) => Promise<EditQueuedSessionResult | EditQueuedSessionConflictError>;
+  applySessionUpdate: (featureId: string, updatedFields: SessionUpdatedFields, dataVersion: number) => void;
 }
 
 const initialState = {
@@ -498,6 +517,111 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         isLoading: false,
       });
       throw error;
+    }
+  },
+
+  editQueuedSession: async (projectId, featureId, dataVersion, updates) => {
+    set({ isLoading: true, error: null });
+
+    try {
+      const response = await fetch(
+        `/api/sessions/${projectId}/${featureId}/edit`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dataVersion, ...updates }),
+        }
+      );
+
+      // Handle version conflict (409)
+      if (response.status === 409) {
+        // Refetch the latest session data
+        const latestResponse = await fetch(`/api/sessions/${projectId}/${featureId}`);
+        if (!latestResponse.ok) {
+          throw new Error('Failed to fetch latest session after conflict');
+        }
+        const latestSession = await latestResponse.json();
+
+        // Update local state with the latest session
+        set({
+          session: get().session?.featureId === featureId ? latestSession : get().session,
+          isLoading: false,
+        });
+
+        // Also update in queuedSessions if present
+        set((state) => ({
+          queuedSessions: state.queuedSessions.map((s) =>
+            s.featureId === featureId ? latestSession : s
+          ),
+        }));
+
+        return {
+          success: false as const,
+          error: 'VERSION_CONFLICT' as const,
+          latestSession,
+        };
+      }
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to edit session');
+      }
+
+      const updatedSession = await response.json();
+
+      // Update local state with the updated session
+      set({
+        session: get().session?.featureId === featureId ? updatedSession : get().session,
+        isLoading: false,
+      });
+
+      // Also update in queuedSessions if present
+      set((state) => ({
+        queuedSessions: state.queuedSessions.map((s) =>
+          s.featureId === featureId ? updatedSession : s
+        ),
+      }));
+
+      return {
+        success: true as const,
+        session: updatedSession,
+      };
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : 'Failed to edit session',
+        isLoading: false,
+      });
+      throw error;
+    }
+  },
+
+  applySessionUpdate: (featureId, updatedFields, dataVersion) => {
+    const { session, queuedSessions } = get();
+
+    // Only apply update if our dataVersion is older than the incoming update
+    // This prevents overwriting newer local changes with stale updates
+
+    // Update the current session if it matches
+    if (session && session.featureId === featureId && session.dataVersion < dataVersion) {
+      set({
+        session: {
+          ...session,
+          ...updatedFields,
+          dataVersion,
+        },
+      });
+    }
+
+    // Update in queuedSessions if present
+    const queuedSession = queuedSessions.find((s) => s.featureId === featureId);
+    if (queuedSession && queuedSession.dataVersion < dataVersion) {
+      set({
+        queuedSessions: queuedSessions.map((s) =>
+          s.featureId === featureId
+            ? { ...s, ...updatedFields, dataVersion }
+            : s
+        ),
+      });
     }
   },
 }));

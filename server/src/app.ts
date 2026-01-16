@@ -33,6 +33,7 @@ import { Plan, Question } from '@claude-code-web/shared';
 import {
   CreateSessionInputSchema,
   UpdateSessionInputSchema,
+  EditQueuedSessionInputSchema,
   StageTransitionInputSchema,
   AnswerQuestionInputSchema,
   BatchAnswersInputSchema,
@@ -2179,6 +2180,58 @@ export function createApp(
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to update session';
       res.status(400).json({ error: message });
+    }
+  });
+
+  // Edit a queued session's content fields (with optimistic concurrency control)
+  app.patch('/api/sessions/:projectId/:featureId/edit', validate(EditQueuedSessionInputSchema), async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+      const { dataVersion, ...updates } = req.body;
+
+      const result = await sessionManager.editQueuedSession(projectId, featureId, dataVersion, updates);
+
+      // Broadcast sessionUpdated event for real-time sync
+      if (eventBroadcaster) {
+        eventBroadcaster.sessionUpdated(
+          projectId,
+          featureId,
+          result.session.id,
+          updates,
+          result.session.dataVersion
+        );
+      }
+
+      res.json(result.session);
+    } catch (error) {
+      // Handle specific error codes
+      if (error instanceof Error) {
+        const errWithCode = error as NodeJS.ErrnoException;
+
+        // Session not found
+        if (error.message.includes('not found')) {
+          return res.status(404).json({ error: error.message });
+        }
+
+        // Session is not queued - cannot edit
+        if (errWithCode.code === 'SESSION_NOT_QUEUED') {
+          return res.status(400).json({
+            error: error.message,
+            code: 'SESSION_NOT_QUEUED',
+          });
+        }
+
+        // Version conflict - optimistic concurrency failure
+        if (errWithCode.code === 'VERSION_CONFLICT') {
+          return res.status(409).json({
+            error: error.message,
+            code: 'VERSION_CONFLICT',
+          });
+        }
+      }
+
+      const message = error instanceof Error ? error.message : 'Failed to edit session';
+      res.status(500).json({ error: message });
     }
   });
 

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   DndContext,
   closestCenter,
@@ -58,7 +58,16 @@ function DragHandle() {
   );
 }
 
+function EditIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+    </svg>
+  );
+}
+
 function SortableSessionCard({ session, formatRelativeTime, isReordering }: SortableSessionCardProps) {
+  const navigate = useNavigate();
   const {
     attributes,
     listeners,
@@ -71,6 +80,12 @@ function SortableSessionCard({ session, formatRelativeTime, isReordering }: Sort
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+  };
+
+  const handleEditClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    navigate(`/session/${session.projectId}/${session.featureId}/edit`);
   };
 
   return (
@@ -125,6 +140,81 @@ function SortableSessionCard({ session, formatRelativeTime, isReordering }: Sort
           </div>
         </div>
       </Link>
+
+      {/* Edit button */}
+      <button
+        onClick={handleEditClick}
+        className="flex items-center px-3 bg-gray-900/50 hover:bg-blue-600 transition-colors text-gray-400 hover:text-white"
+        aria-label={`Edit ${session.title}`}
+        data-testid={`edit-session-${session.featureId}`}
+      >
+        <EditIcon />
+      </button>
+    </div>
+  );
+}
+
+interface SingleSessionCardProps {
+  session: Session;
+  formatRelativeTime: (date: Date) => string;
+}
+
+function SingleSessionCard({ session, formatRelativeTime }: SingleSessionCardProps) {
+  const navigate = useNavigate();
+
+  const handleEditClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    navigate(`/session/${session.projectId}/${session.featureId}/edit`);
+  };
+
+  return (
+    <div
+      className="flex items-stretch bg-gray-800 rounded-lg overflow-hidden hover:bg-gray-700 transition-colors"
+      data-testid={`queued-session-${session.featureId}`}
+    >
+      {/* Session content - clickable link */}
+      <Link
+        to={`/session/${session.projectId}/${session.featureId}`}
+        className="flex-1 p-4 min-w-0"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-yellow-500 font-medium text-sm">
+                #{session.queuePosition}
+              </span>
+              <h3 className="font-medium text-lg truncate">{session.title}</h3>
+            </div>
+            <p className="text-gray-400 text-sm mt-1 truncate">
+              {session.projectPath}
+            </p>
+            {session.featureDescription && (
+              <p className="text-gray-500 text-sm mt-1 line-clamp-2">
+                {session.featureDescription}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2 sm:gap-3 sm:ml-4 flex-wrap">
+            <span className={`px-2 py-1 rounded text-xs font-medium ${STATUS_COLORS[session.status] || 'bg-gray-600'}`}>
+              Queued
+            </span>
+            <span className="text-gray-500 text-sm">
+              {formatRelativeTime(new Date(session.updatedAt))}
+            </span>
+          </div>
+        </div>
+      </Link>
+
+      {/* Edit button */}
+      <button
+        onClick={handleEditClick}
+        className="flex items-center px-3 bg-gray-900/50 hover:bg-blue-600 transition-colors text-gray-400 hover:text-white"
+        aria-label={`Edit ${session.title}`}
+        data-testid={`edit-session-${session.featureId}`}
+      >
+        <EditIcon />
+      </button>
     </div>
   );
 }
@@ -176,43 +266,11 @@ export default function QueuedSessionsList({
     return (
       <div className="space-y-3">
         {sortedSessions.map((session) => (
-          <div
+          <SingleSessionCard
             key={session.featureId}
-            className="bg-gray-800 hover:bg-gray-700 rounded-lg p-4 transition-colors"
-            data-testid={`queued-session-${session.featureId}`}
-          >
-            <Link
-              to={`/session/${session.projectId}/${session.featureId}`}
-              className="block"
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-yellow-500 font-medium text-sm">
-                      #{session.queuePosition}
-                    </span>
-                    <h3 className="font-medium text-lg truncate">{session.title}</h3>
-                  </div>
-                  <p className="text-gray-400 text-sm mt-1 truncate">
-                    {session.projectPath}
-                  </p>
-                  {session.featureDescription && (
-                    <p className="text-gray-500 text-sm mt-1 line-clamp-2">
-                      {session.featureDescription}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 sm:gap-3 sm:ml-4 flex-wrap">
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${STATUS_COLORS[session.status] || 'bg-gray-600'}`}>
-                    Queued
-                  </span>
-                  <span className="text-gray-500 text-sm">
-                    {formatRelativeTime(new Date(session.updatedAt))}
-                  </span>
-                </div>
-              </div>
-            </Link>
-          </div>
+            session={session}
+            formatRelativeTime={formatRelativeTime}
+          />
         ))}
       </div>
     );

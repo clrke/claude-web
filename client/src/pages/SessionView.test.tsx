@@ -35,6 +35,7 @@ const renderWithRouter = (ui: React.ReactElement, route = '/session/proj1/feat1'
 // Helper to create a valid Session object
 const createMockSession = (overrides: Partial<Session> = {}): Session => ({
   version: '1.0',
+  dataVersion: 1,
   id: 'sess1',
   projectId: 'proj1',
   featureId: 'feat1',
@@ -1095,6 +1096,218 @@ describe('SessionView', () => {
       });
 
       expect(screen.queryByTestId('resume-button')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Edit button for queued sessions', () => {
+    it('shows Edit button for queued sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 0, status: 'queued', queuePosition: 1 }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('edit-session-button')).toBeInTheDocument();
+      });
+    });
+
+    it('Edit button navigates to edit page when clicked', async () => {
+      const user = userEvent.setup();
+
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 0, status: 'queued', queuePosition: 1 }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/session/proj1/feat1']}>
+          <Routes>
+            <Route path="/session/:projectId/:featureId" element={<SessionView />} />
+            <Route path="/session/:projectId/:featureId/edit" element={<div data-testid="edit-page">Edit Page</div>} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('edit-session-button')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId('edit-session-button'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('edit-page')).toBeInTheDocument();
+      });
+    });
+
+    it('hides Edit button for discovery sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 1, status: 'discovery' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Feature')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('edit-session-button')).not.toBeInTheDocument();
+    });
+
+    it('hides Edit button for paused sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'paused' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('paused-badge')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('edit-session-button')).not.toBeInTheDocument();
+    });
+
+    it('hides Edit button for completed sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 7, status: 'completed' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Stage 7: Completed')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('edit-session-button')).not.toBeInTheDocument();
+    });
+
+    it('hides Edit button for failed sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'failed' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('failed-badge')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('edit-session-button')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('session.updated socket event handler', () => {
+    it('registers session.updated event listener on mount', async () => {
+      const mockOn = vi.fn();
+      const mockOff = vi.fn();
+
+      vi.mocked(await import('../services/socket')).getSocket.mockReturnValue({
+        on: mockOn,
+        off: mockOff,
+      } as unknown as ReturnType<typeof import('../services/socket').getSocket>);
+
+      useSessionStore.setState({
+        session: mockSession,
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(mockOn).toHaveBeenCalledWith('session.updated', expect.any(Function));
+      });
+    });
+
+    it('unregisters session.updated event listener on unmount', async () => {
+      const mockOn = vi.fn();
+      const mockOff = vi.fn();
+
+      vi.mocked(await import('../services/socket')).getSocket.mockReturnValue({
+        on: mockOn,
+        off: mockOff,
+      } as unknown as ReturnType<typeof import('../services/socket').getSocket>);
+
+      useSessionStore.setState({
+        session: mockSession,
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      const { unmount } = renderWithRouter(<SessionView />);
+
+      unmount();
+
+      await waitFor(() => {
+        expect(mockOff).toHaveBeenCalledWith('session.updated', expect.any(Function));
+      });
+    });
+
+    it('calls applySessionUpdate when session.updated event is received', async () => {
+      const mockApplySessionUpdate = vi.fn();
+      let sessionUpdatedCallback: ((data: unknown) => void) | undefined;
+
+      const mockOn = vi.fn((event: string, callback: (data: unknown) => void) => {
+        if (event === 'session.updated') {
+          sessionUpdatedCallback = callback;
+        }
+      });
+      const mockOff = vi.fn();
+
+      vi.mocked(await import('../services/socket')).getSocket.mockReturnValue({
+        on: mockOn,
+        off: mockOff,
+      } as unknown as ReturnType<typeof import('../services/socket').getSocket>);
+
+      useSessionStore.setState({
+        session: mockSession,
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+        applySessionUpdate: mockApplySessionUpdate,
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(sessionUpdatedCallback).toBeDefined();
+      });
+
+      // Simulate receiving a session.updated event
+      sessionUpdatedCallback!({
+        projectId: 'proj1',
+        featureId: 'feat1',
+        sessionId: 'sess1',
+        updatedFields: { title: 'Updated Title' },
+        dataVersion: 2,
+        timestamp: '2024-01-01T01:00:00Z',
+      });
+
+      expect(mockApplySessionUpdate).toHaveBeenCalledWith(
+        'feat1',
+        { title: 'Updated Title' },
+        2
+      );
     });
   });
 });

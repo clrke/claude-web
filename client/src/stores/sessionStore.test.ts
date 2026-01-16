@@ -360,6 +360,7 @@ describe('sessionStore selector hooks', () => {
     const createMockSession = (featureId: string, queuePosition: number | null): Session => ({
       id: `session-${featureId}`,
       version: '1.0',
+      dataVersion: 1,
       projectId: 'test-project',
       featureId,
       title: `Feature ${featureId}`,
@@ -899,6 +900,543 @@ describe('sessionStore selector hooks', () => {
         await resumePromise;
 
         expect(useSessionStore.getState().isLoading).toBe(false);
+      });
+    });
+
+    describe('editQueuedSession', () => {
+      it('calls API with correct parameters', async () => {
+        const queuedSession = createMockSession('feature-1', 1);
+        queuedSession.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session: queuedSession });
+        });
+
+        const updatedSession = { ...queuedSession, title: 'Updated Title', dataVersion: 2 };
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(updatedSession),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, { title: 'Updated Title' });
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/sessions/test-project/feature-1/edit',
+          expect.objectContaining({
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataVersion: 1, title: 'Updated Title' }),
+          })
+        );
+      });
+
+      it('returns success result on successful edit', async () => {
+        const queuedSession = createMockSession('feature-1', 1);
+        queuedSession.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session: queuedSession });
+        });
+
+        const updatedSession = { ...queuedSession, title: 'Updated Title', dataVersion: 2 };
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(updatedSession),
+        });
+        global.fetch = fetchMock;
+
+        let result: { success: boolean; session?: Session; error?: string; latestSession?: Session } | undefined;
+        await act(async () => {
+          result = await useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, { title: 'Updated Title' });
+        });
+
+        expect(result).toEqual({
+          success: true,
+          session: updatedSession,
+        });
+      });
+
+      it('updates local session state on successful edit', async () => {
+        const queuedSession = createMockSession('feature-1', 1);
+        queuedSession.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session: queuedSession });
+        });
+
+        const updatedSession = { ...queuedSession, title: 'Updated Title', dataVersion: 2 };
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(updatedSession),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, { title: 'Updated Title' });
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Updated Title');
+        expect(state.session?.dataVersion).toBe(2);
+        expect(state.isLoading).toBe(false);
+      });
+
+      it('updates queuedSessions array on successful edit', async () => {
+        const queuedSession1 = createMockSession('feature-1', 1);
+        queuedSession1.dataVersion = 1;
+        const queuedSession2 = createMockSession('feature-2', 2);
+        queuedSession2.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({
+            session: null,
+            queuedSessions: [queuedSession1, queuedSession2],
+          });
+        });
+
+        const updatedSession = { ...queuedSession1, title: 'Updated Title', dataVersion: 2 };
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(updatedSession),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, { title: 'Updated Title' });
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].title).toBe('Updated Title');
+        expect(state.queuedSessions[0].dataVersion).toBe(2);
+        expect(state.queuedSessions[1].title).toBe('Feature feature-2'); // Unchanged
+      });
+
+      it('returns VERSION_CONFLICT error on 409 response', async () => {
+        const queuedSession = createMockSession('feature-1', 1);
+        queuedSession.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session: queuedSession });
+        });
+
+        const latestSession = { ...queuedSession, title: 'Modified by another user', dataVersion: 2 };
+
+        // Mock the edit endpoint returning 409
+        const fetchMock = vi.fn()
+          .mockResolvedValueOnce({
+            ok: false,
+            status: 409,
+            json: () => Promise.resolve({ error: 'VERSION_CONFLICT' }),
+          })
+          // Mock the refetch request
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(latestSession),
+          });
+        global.fetch = fetchMock;
+
+        let result: { success: boolean; session?: Session; error?: string; latestSession?: Session } | undefined;
+        await act(async () => {
+          result = await useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, { title: 'My update' });
+        });
+
+        expect(result).toEqual({
+          success: false,
+          error: 'VERSION_CONFLICT',
+          latestSession,
+        });
+      });
+
+      it('updates local state with latest session on version conflict', async () => {
+        const queuedSession = createMockSession('feature-1', 1);
+        queuedSession.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session: queuedSession });
+        });
+
+        const latestSession = { ...queuedSession, title: 'Modified by another user', dataVersion: 2 };
+
+        const fetchMock = vi.fn()
+          .mockResolvedValueOnce({
+            ok: false,
+            status: 409,
+            json: () => Promise.resolve({ error: 'VERSION_CONFLICT' }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(latestSession),
+          });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, { title: 'My update' });
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Modified by another user');
+        expect(state.session?.dataVersion).toBe(2);
+        expect(state.isLoading).toBe(false);
+      });
+
+      it('updates queuedSessions with latest session on version conflict', async () => {
+        const queuedSession = createMockSession('feature-1', 1);
+        queuedSession.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({
+            session: null,
+            queuedSessions: [queuedSession],
+          });
+        });
+
+        const latestSession = { ...queuedSession, title: 'Modified by another user', dataVersion: 2 };
+
+        const fetchMock = vi.fn()
+          .mockResolvedValueOnce({
+            ok: false,
+            status: 409,
+            json: () => Promise.resolve({ error: 'VERSION_CONFLICT' }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(latestSession),
+          });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, { title: 'My update' });
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].title).toBe('Modified by another user');
+        expect(state.queuedSessions[0].dataVersion).toBe(2);
+      });
+
+      it('throws error on other API failures', async () => {
+        const queuedSession = createMockSession('feature-1', 1);
+        queuedSession.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session: queuedSession });
+        });
+
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          json: () => Promise.resolve({ error: 'SESSION_NOT_QUEUED' }),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          try {
+            await useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, { title: 'My update' });
+            expect.fail('Should have thrown');
+          } catch (error) {
+            expect((error as Error).message).toBe('SESSION_NOT_QUEUED');
+          }
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.error).toBe('SESSION_NOT_QUEUED');
+        expect(state.isLoading).toBe(false);
+      });
+
+      it('sets loading state during API call', async () => {
+        const queuedSession = createMockSession('feature-1', 1);
+        queuedSession.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session: queuedSession });
+        });
+
+        const fetchMock = vi.fn().mockImplementation(() =>
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve({
+                ok: true,
+                json: () => Promise.resolve({ ...queuedSession, title: 'Updated', dataVersion: 2 }),
+              });
+            }, 100);
+          })
+        );
+        global.fetch = fetchMock;
+
+        const editPromise = act(async () => {
+          return useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, { title: 'Updated' });
+        });
+
+        // Check loading state is set
+        expect(useSessionStore.getState().isLoading).toBe(true);
+
+        await editPromise;
+
+        expect(useSessionStore.getState().isLoading).toBe(false);
+      });
+
+      it('does not update session state if editing different session', async () => {
+        const currentSession = createMockSession('feature-current', null);
+        currentSession.dataVersion = 1;
+        currentSession.status = 'discovery';
+
+        const queuedSession = createMockSession('feature-1', 1);
+        queuedSession.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({
+            session: currentSession,
+            queuedSessions: [queuedSession],
+          });
+        });
+
+        const updatedSession = { ...queuedSession, title: 'Updated Title', dataVersion: 2 };
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(updatedSession),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, { title: 'Updated Title' });
+        });
+
+        const state = useSessionStore.getState();
+        // Current session should remain unchanged
+        expect(state.session?.featureId).toBe('feature-current');
+        expect(state.session?.title).toBe('Feature feature-current');
+        // But queuedSessions should be updated
+        expect(state.queuedSessions[0].title).toBe('Updated Title');
+      });
+
+      it('handles multiple field updates', async () => {
+        const queuedSession = createMockSession('feature-1', 1);
+        queuedSession.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session: queuedSession });
+        });
+
+        const updatedSession = {
+          ...queuedSession,
+          title: 'New Title',
+          featureDescription: 'New description',
+          baseBranch: 'develop',
+          dataVersion: 2,
+        };
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(updatedSession),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().editQueuedSession('test-project', 'feature-1', 1, {
+            title: 'New Title',
+            featureDescription: 'New description',
+            baseBranch: 'develop',
+          });
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/sessions/test-project/feature-1/edit',
+          expect.objectContaining({
+            body: JSON.stringify({
+              dataVersion: 1,
+              title: 'New Title',
+              featureDescription: 'New description',
+              baseBranch: 'develop',
+            }),
+          })
+        );
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('New Title');
+        expect(state.session?.featureDescription).toBe('New description');
+        expect(state.session?.baseBranch).toBe('develop');
+      });
+    });
+
+    describe('applySessionUpdate', () => {
+      it('updates current session when featureId matches and dataVersion is newer', () => {
+        const session = createMockSession('feature-1', null);
+        session.dataVersion = 1;
+        session.status = 'discovery';
+
+        act(() => {
+          useSessionStore.setState({ session });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Updated Title');
+        expect(state.session?.dataVersion).toBe(2);
+      });
+
+      it('does not update current session when featureId does not match', () => {
+        const session = createMockSession('feature-1', null);
+        session.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-2', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Feature feature-1'); // Unchanged
+        expect(state.session?.dataVersion).toBe(1);
+      });
+
+      it('does not update current session when dataVersion is not newer', () => {
+        const session = createMockSession('feature-1', null);
+        session.dataVersion = 3;
+
+        act(() => {
+          useSessionStore.setState({ session });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Feature feature-1'); // Unchanged
+        expect(state.session?.dataVersion).toBe(3);
+      });
+
+      it('does not update current session when dataVersion is equal', () => {
+        const session = createMockSession('feature-1', null);
+        session.dataVersion = 2;
+
+        act(() => {
+          useSessionStore.setState({ session });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Feature feature-1'); // Unchanged
+      });
+
+      it('updates session in queuedSessions when featureId matches and dataVersion is newer', () => {
+        const queued1 = createMockSession('feature-1', 1);
+        queued1.dataVersion = 1;
+        const queued2 = createMockSession('feature-2', 2);
+        queued2.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ queuedSessions: [queued1, queued2] });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].title).toBe('Updated Title');
+        expect(state.queuedSessions[0].dataVersion).toBe(2);
+        expect(state.queuedSessions[1].title).toBe('Feature feature-2'); // Unchanged
+      });
+
+      it('does not update queuedSessions when dataVersion is not newer', () => {
+        const queued = createMockSession('feature-1', 1);
+        queued.dataVersion = 3;
+
+        act(() => {
+          useSessionStore.setState({ queuedSessions: [queued] });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].title).toBe('Feature feature-1'); // Unchanged
+        expect(state.queuedSessions[0].dataVersion).toBe(3);
+      });
+
+      it('updates both current session and queuedSessions when both match', () => {
+        const session = createMockSession('feature-1', 1);
+        session.dataVersion = 1;
+        const queuedCopy = createMockSession('feature-1', 1);
+        queuedCopy.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session, queuedSessions: [queuedCopy] });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Updated Title');
+        expect(state.session?.dataVersion).toBe(2);
+        expect(state.queuedSessions[0].title).toBe('Updated Title');
+        expect(state.queuedSessions[0].dataVersion).toBe(2);
+      });
+
+      it('handles multiple field updates', () => {
+        const session = createMockSession('feature-1', 1);
+        session.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', {
+            title: 'New Title',
+            featureDescription: 'New description',
+            baseBranch: 'develop',
+          }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('New Title');
+        expect(state.session?.featureDescription).toBe('New description');
+        expect(state.session?.baseBranch).toBe('develop');
+        expect(state.session?.dataVersion).toBe(2);
+      });
+
+      it('does not update when session is null', () => {
+        act(() => {
+          useSessionStore.setState({ session: null, queuedSessions: [] });
+        });
+
+        // Should not throw
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session).toBeNull();
+      });
+
+      it('does not update when featureId not found in queuedSessions', () => {
+        const queued = createMockSession('feature-1', 1);
+        queued.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session: null, queuedSessions: [queued] });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-nonexistent', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].title).toBe('Feature feature-1'); // Unchanged
       });
     });
   });

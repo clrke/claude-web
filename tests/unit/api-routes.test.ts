@@ -1952,4 +1952,400 @@ describe('API Routes', () => {
       });
     });
   });
+
+  describe('PATCH /api/sessions/:projectId/:featureId/edit', () => {
+    const projectPath = '/Users/test/project';
+    let activeProjectId: string;
+    let queuedProjectId: string;
+    let queuedFeatureId: string;
+
+    beforeEach(async () => {
+      // Create active session first (so next session will be queued)
+      const activeSession = await sessionManager.createSession({
+        title: 'Active Session',
+        featureDescription: 'Active description',
+        projectPath,
+      });
+      activeProjectId = activeSession.projectId;
+
+      // Create queued session
+      const queuedSession = await sessionManager.createSession({
+        title: 'Queued Session',
+        featureDescription: 'Queued description',
+        projectPath,
+      });
+      queuedProjectId = queuedSession.projectId;
+      queuedFeatureId = queuedSession.featureId;
+    });
+
+    describe('successful edits', () => {
+      it('should edit a queued session successfully', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'Updated Title',
+          });
+
+        expect(response.status).toBe(200);
+        expect(response.body.title).toBe('Updated Title');
+        expect(response.body.dataVersion).toBe(2);
+      });
+
+      it('should update multiple fields at once', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'New Title',
+            featureDescription: 'New description',
+            technicalNotes: 'New notes',
+            baseBranch: 'develop',
+          });
+
+        expect(response.status).toBe(200);
+        expect(response.body.title).toBe('New Title');
+        expect(response.body.featureDescription).toBe('New description');
+        expect(response.body.technicalNotes).toBe('New notes');
+        expect(response.body.baseBranch).toBe('develop');
+      });
+
+      it('should persist changes to storage', async () => {
+        await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'Persisted Title',
+          });
+
+        // Fetch session via GET to verify persistence
+        const getResponse = await request(app)
+          .get(`/api/sessions/${queuedProjectId}/${queuedFeatureId}`);
+
+        expect(getResponse.status).toBe(200);
+        expect(getResponse.body.title).toBe('Persisted Title');
+        expect(getResponse.body.dataVersion).toBe(2);
+      });
+
+      it('should update updatedAt timestamp', async () => {
+        const beforeResponse = await request(app)
+          .get(`/api/sessions/${queuedProjectId}/${queuedFeatureId}`);
+        const originalUpdatedAt = beforeResponse.body.updatedAt;
+
+        // Wait a bit to ensure time difference
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'Updated',
+          });
+
+        expect(response.status).toBe(200);
+        expect(new Date(response.body.updatedAt).getTime())
+          .toBeGreaterThan(new Date(originalUpdatedAt).getTime());
+      });
+
+      it('should allow editing acceptanceCriteria', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            acceptanceCriteria: [
+              { text: 'New criteria 1', checked: false, type: 'manual' },
+              { text: 'New criteria 2', checked: true, type: 'automated' },
+            ],
+          });
+
+        expect(response.status).toBe(200);
+        expect(response.body.acceptanceCriteria).toHaveLength(2);
+        expect(response.body.acceptanceCriteria[0].text).toBe('New criteria 1');
+      });
+
+      it('should allow editing affectedFiles', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            affectedFiles: ['src/new.ts', 'src/other.ts'],
+          });
+
+        expect(response.status).toBe(200);
+        expect(response.body.affectedFiles).toEqual(['src/new.ts', 'src/other.ts']);
+      });
+
+      it('should allow editing preferences', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            preferences: {
+              riskComfort: 'high',
+              speedVsQuality: 'quality',
+              scopeFlexibility: 'open',
+              detailLevel: 'detailed',
+              autonomyLevel: 'autonomous',
+            },
+          });
+
+        expect(response.status).toBe(200);
+        expect(response.body.preferences.riskComfort).toBe('high');
+        expect(response.body.preferences.autonomyLevel).toBe('autonomous');
+      });
+    });
+
+    describe('validation errors', () => {
+      it('should return 404 for non-existent session', async () => {
+        const response = await request(app)
+          .patch('/api/sessions/nonexistent/session/edit')
+          .send({
+            dataVersion: 1,
+            title: 'Test',
+          });
+
+        expect(response.status).toBe(404);
+        expect(response.body.error).toMatch(/not found/i);
+      });
+
+      it('should return 400 when dataVersion is missing', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            title: 'Test',
+          });
+
+        expect(response.status).toBe(400);
+        // Zod validation error for missing dataVersion
+      });
+
+      it('should return 400 when dataVersion is not a number', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 'not-a-number',
+            title: 'Test',
+          });
+
+        expect(response.status).toBe(400);
+      });
+
+      it('should return 400 when dataVersion is negative', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: -1,
+            title: 'Test',
+          });
+
+        expect(response.status).toBe(400);
+      });
+
+      it('should return 400 when title is empty', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: '',
+          });
+
+        expect(response.status).toBe(400);
+      });
+
+      it('should return 400 when title is too long', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'a'.repeat(201),
+          });
+
+        expect(response.status).toBe(400);
+      });
+
+      it('should return 400 for invalid baseBranch', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            baseBranch: 'invalid branch name with spaces',
+          });
+
+        expect(response.status).toBe(400);
+      });
+    });
+
+    describe('session status validation', () => {
+      it('should return 400 for discovery status session', async () => {
+        // The active session is in discovery status
+        const activeFeatureId = 'active-session';
+
+        const response = await request(app)
+          .patch(`/api/sessions/${activeProjectId}/${activeFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'Test',
+          });
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe('SESSION_NOT_QUEUED');
+        expect(response.body.error).toMatch(/cannot edit session with status 'discovery'/i);
+      });
+
+      it('should return 400 for paused status session', async () => {
+        // First backout the queued session to pause it
+        // But queued sessions can't be backed out, so we need to modify the status directly
+        const sessionPath = `${queuedProjectId}/${queuedFeatureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.status = 'paused';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'Test',
+          });
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe('SESSION_NOT_QUEUED');
+        expect(response.body.error).toMatch(/cannot edit session with status 'paused'/i);
+      });
+
+      it('should return 400 for failed status session', async () => {
+        const sessionPath = `${queuedProjectId}/${queuedFeatureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.status = 'failed';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'Test',
+          });
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe('SESSION_NOT_QUEUED');
+        expect(response.body.error).toMatch(/cannot edit session with status 'failed'/i);
+      });
+
+      it('should return 400 for completed status session', async () => {
+        const sessionPath = `${queuedProjectId}/${queuedFeatureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.status = 'completed';
+        sessionData!.currentStage = 7;
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'Test',
+          });
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe('SESSION_NOT_QUEUED');
+      });
+    });
+
+    describe('version conflict handling', () => {
+      it('should return 409 when dataVersion does not match', async () => {
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 999, // Wrong version
+            title: 'Test',
+          });
+
+        expect(response.status).toBe(409);
+        expect(response.body.code).toBe('VERSION_CONFLICT');
+        expect(response.body.error).toMatch(/version conflict/i);
+      });
+
+      it('should return 409 on concurrent edits with stale version', async () => {
+        // First edit succeeds
+        await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'First Edit',
+          });
+
+        // Second edit with stale version fails
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1, // Stale version
+            title: 'Second Edit',
+          });
+
+        expect(response.status).toBe(409);
+        expect(response.body.code).toBe('VERSION_CONFLICT');
+      });
+
+      it('should succeed with correct version after previous edit', async () => {
+        // First edit
+        const firstResponse = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'First Edit',
+          });
+
+        expect(firstResponse.status).toBe(200);
+        expect(firstResponse.body.dataVersion).toBe(2);
+
+        // Second edit with updated version
+        const secondResponse = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 2, // Updated version
+            title: 'Second Edit',
+          });
+
+        expect(secondResponse.status).toBe(200);
+        expect(secondResponse.body.title).toBe('Second Edit');
+        expect(secondResponse.body.dataVersion).toBe(3);
+      });
+    });
+
+    describe('field preservation', () => {
+      it('should not change featureId when title changes', async () => {
+        const originalFeatureId = queuedFeatureId;
+
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'Completely Different Title',
+          });
+
+        expect(response.status).toBe(200);
+        expect(response.body.featureId).toBe(originalFeatureId);
+        expect(response.body.title).toBe('Completely Different Title');
+      });
+
+      it('should preserve protected fields', async () => {
+        const getResponse = await request(app)
+          .get(`/api/sessions/${queuedProjectId}/${queuedFeatureId}`);
+        const originalSession = getResponse.body;
+
+        const response = await request(app)
+          .patch(`/api/sessions/${queuedProjectId}/${queuedFeatureId}/edit`)
+          .send({
+            dataVersion: 1,
+            title: 'New Title',
+          });
+
+        expect(response.status).toBe(200);
+        expect(response.body.id).toBe(originalSession.id);
+        expect(response.body.projectId).toBe(originalSession.projectId);
+        expect(response.body.featureId).toBe(originalSession.featureId);
+        expect(response.body.createdAt).toBe(originalSession.createdAt);
+        expect(response.body.status).toBe('queued');
+        expect(response.body.queuePosition).toBe(originalSession.queuePosition);
+      });
+    });
+  });
 });

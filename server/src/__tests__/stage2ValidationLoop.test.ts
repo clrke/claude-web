@@ -151,6 +151,7 @@ function createIncompletePlan(overrides = {}): ComposablePlan {
 function createMockSession(overrides: Partial<Session> = {}): Session {
   return {
     version: '1.0.0',
+    dataVersion: 1,
     id: 'session-123',
     projectId: 'project-1',
     featureId: 'feature-a',
