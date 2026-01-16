@@ -43,7 +43,7 @@ export default function EditSession() {
   const navigate = useNavigate();
   const { projectId, featureId } = useParams<{ projectId: string; featureId: string }>();
 
-  const { session: storeSession, editQueuedSession, fetchSession, isLoading: storeLoading } = useSessionStore();
+  const { session: storeSession, editQueuedSession } = useSessionStore();
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);

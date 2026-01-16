@@ -22,6 +22,7 @@ global.fetch = mockFetch;
 
 const createMockSession = (overrides: Partial<Session> = {}): Session => ({
   version: '1.0',
+  dataVersion: 1,
   id: `session-${overrides.featureId || 'feat1'}`,
   projectId: 'proj1',
   featureId: 'feat1',
