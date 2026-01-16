@@ -1258,5 +1258,186 @@ describe('sessionStore selector hooks', () => {
         expect(state.session?.baseBranch).toBe('develop');
       });
     });
+
+    describe('applySessionUpdate', () => {
+      it('updates current session when featureId matches and dataVersion is newer', () => {
+        const session = createMockSession('feature-1', null);
+        session.dataVersion = 1;
+        session.status = 'discovery';
+
+        act(() => {
+          useSessionStore.setState({ session });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Updated Title');
+        expect(state.session?.dataVersion).toBe(2);
+      });
+
+      it('does not update current session when featureId does not match', () => {
+        const session = createMockSession('feature-1', null);
+        session.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-2', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Feature feature-1'); // Unchanged
+        expect(state.session?.dataVersion).toBe(1);
+      });
+
+      it('does not update current session when dataVersion is not newer', () => {
+        const session = createMockSession('feature-1', null);
+        session.dataVersion = 3;
+
+        act(() => {
+          useSessionStore.setState({ session });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Feature feature-1'); // Unchanged
+        expect(state.session?.dataVersion).toBe(3);
+      });
+
+      it('does not update current session when dataVersion is equal', () => {
+        const session = createMockSession('feature-1', null);
+        session.dataVersion = 2;
+
+        act(() => {
+          useSessionStore.setState({ session });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Feature feature-1'); // Unchanged
+      });
+
+      it('updates session in queuedSessions when featureId matches and dataVersion is newer', () => {
+        const queued1 = createMockSession('feature-1', 1);
+        queued1.dataVersion = 1;
+        const queued2 = createMockSession('feature-2', 2);
+        queued2.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ queuedSessions: [queued1, queued2] });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].title).toBe('Updated Title');
+        expect(state.queuedSessions[0].dataVersion).toBe(2);
+        expect(state.queuedSessions[1].title).toBe('Feature feature-2'); // Unchanged
+      });
+
+      it('does not update queuedSessions when dataVersion is not newer', () => {
+        const queued = createMockSession('feature-1', 1);
+        queued.dataVersion = 3;
+
+        act(() => {
+          useSessionStore.setState({ queuedSessions: [queued] });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].title).toBe('Feature feature-1'); // Unchanged
+        expect(state.queuedSessions[0].dataVersion).toBe(3);
+      });
+
+      it('updates both current session and queuedSessions when both match', () => {
+        const session = createMockSession('feature-1', 1);
+        session.dataVersion = 1;
+        const queuedCopy = createMockSession('feature-1', 1);
+        queuedCopy.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session, queuedSessions: [queuedCopy] });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('Updated Title');
+        expect(state.session?.dataVersion).toBe(2);
+        expect(state.queuedSessions[0].title).toBe('Updated Title');
+        expect(state.queuedSessions[0].dataVersion).toBe(2);
+      });
+
+      it('handles multiple field updates', () => {
+        const session = createMockSession('feature-1', 1);
+        session.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', {
+            title: 'New Title',
+            featureDescription: 'New description',
+            baseBranch: 'develop',
+          }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.title).toBe('New Title');
+        expect(state.session?.featureDescription).toBe('New description');
+        expect(state.session?.baseBranch).toBe('develop');
+        expect(state.session?.dataVersion).toBe(2);
+      });
+
+      it('does not update when session is null', () => {
+        act(() => {
+          useSessionStore.setState({ session: null, queuedSessions: [] });
+        });
+
+        // Should not throw
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-1', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session).toBeNull();
+      });
+
+      it('does not update when featureId not found in queuedSessions', () => {
+        const queued = createMockSession('feature-1', 1);
+        queued.dataVersion = 1;
+
+        act(() => {
+          useSessionStore.setState({ session: null, queuedSessions: [queued] });
+        });
+
+        act(() => {
+          useSessionStore.getState().applySessionUpdate('feature-nonexistent', { title: 'Updated Title' }, 2);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].title).toBe('Feature feature-1'); // Unchanged
+      });
+    });
   });
 });

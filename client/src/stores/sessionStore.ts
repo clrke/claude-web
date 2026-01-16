@@ -121,6 +121,7 @@ interface SessionState {
   backoutSession: (projectId: string, featureId: string, action: BackoutAction, reason?: BackoutReason) => Promise<void>;
   resumeSession: (projectId: string, featureId: string) => Promise<void>;
   editQueuedSession: (projectId: string, featureId: string, dataVersion: number, updates: SessionUpdatedFields) => Promise<EditQueuedSessionResult | EditQueuedSessionConflictError>;
+  applySessionUpdate: (featureId: string, updatedFields: SessionUpdatedFields, dataVersion: number) => void;
 }
 
 const initialState = {
@@ -591,6 +592,36 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         isLoading: false,
       });
       throw error;
+    }
+  },
+
+  applySessionUpdate: (featureId, updatedFields, dataVersion) => {
+    const { session, queuedSessions } = get();
+
+    // Only apply update if our dataVersion is older than the incoming update
+    // This prevents overwriting newer local changes with stale updates
+
+    // Update the current session if it matches
+    if (session && session.featureId === featureId && session.dataVersion < dataVersion) {
+      set({
+        session: {
+          ...session,
+          ...updatedFields,
+          dataVersion,
+        },
+      });
+    }
+
+    // Update in queuedSessions if present
+    const queuedSession = queuedSessions.find((s) => s.featureId === featureId);
+    if (queuedSession && queuedSession.dataVersion < dataVersion) {
+      set({
+        queuedSessions: queuedSessions.map((s) =>
+          s.featureId === featureId
+            ? { ...s, ...updatedFields, dataVersion }
+            : s
+        ),
+      });
     }
   },
 }));

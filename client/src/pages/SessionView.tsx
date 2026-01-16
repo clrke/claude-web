@@ -15,6 +15,7 @@ import type {
   StageChangedEvent,
   StepStartedEvent,
   StepCompletedEvent,
+  SessionUpdatedEvent,
   Session,
   Plan,
   PlanStep,
@@ -277,6 +278,7 @@ export default function SessionView() {
     retrySession,
     backoutSession,
     resumeSession,
+    applySessionUpdate,
   } = useSessionStore();
 
   const navigate = useNavigate();
@@ -344,6 +346,10 @@ export default function SessionView() {
   const handleImplementationProgress = useCallback((data: ImplementationProgressEvent) => {
     setImplementationProgress(data);
   }, [setImplementationProgress]);
+
+  const handleSessionUpdated = useCallback((data: SessionUpdatedEvent) => {
+    applySessionUpdate(data.featureId, data.updatedFields, data.dataVersion);
+  }, [applySessionUpdate]);
 
   // Stage transition handler
   const handleTransition = useCallback(async (targetStage: number) => {
@@ -424,6 +430,7 @@ export default function SessionView() {
     socket.on('step.started', handleStepStarted);
     socket.on('step.completed', handleStepCompleted);
     socket.on('implementation.progress', handleImplementationProgress);
+    socket.on('session.updated', handleSessionUpdated);
 
     return () => {
       socket.off('execution.status', handleExecutionStatus);
@@ -434,9 +441,10 @@ export default function SessionView() {
       socket.off('step.started', handleStepStarted);
       socket.off('step.completed', handleStepCompleted);
       socket.off('implementation.progress', handleImplementationProgress);
+      socket.off('session.updated', handleSessionUpdated);
       disconnectFromSession(projectId, featureId);
     };
-  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handleStageChanged, handleStepStarted, handleStepCompleted, handleImplementationProgress]);
+  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handleStageChanged, handleStepStarted, handleStepCompleted, handleImplementationProgress, handleSessionUpdated]);
 
   if (isLoading) {
     return (

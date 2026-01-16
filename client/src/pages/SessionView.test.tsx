@@ -1213,4 +1213,101 @@ describe('SessionView', () => {
       expect(screen.queryByTestId('edit-session-button')).not.toBeInTheDocument();
     });
   });
+
+  describe('session.updated socket event handler', () => {
+    it('registers session.updated event listener on mount', async () => {
+      const mockOn = vi.fn();
+      const mockOff = vi.fn();
+
+      vi.mocked(await import('../services/socket')).getSocket.mockReturnValue({
+        on: mockOn,
+        off: mockOff,
+      } as unknown as ReturnType<typeof import('../services/socket').getSocket>);
+
+      useSessionStore.setState({
+        session: mockSession,
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(mockOn).toHaveBeenCalledWith('session.updated', expect.any(Function));
+      });
+    });
+
+    it('unregisters session.updated event listener on unmount', async () => {
+      const mockOn = vi.fn();
+      const mockOff = vi.fn();
+
+      vi.mocked(await import('../services/socket')).getSocket.mockReturnValue({
+        on: mockOn,
+        off: mockOff,
+      } as unknown as ReturnType<typeof import('../services/socket').getSocket>);
+
+      useSessionStore.setState({
+        session: mockSession,
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      const { unmount } = renderWithRouter(<SessionView />);
+
+      unmount();
+
+      await waitFor(() => {
+        expect(mockOff).toHaveBeenCalledWith('session.updated', expect.any(Function));
+      });
+    });
+
+    it('calls applySessionUpdate when session.updated event is received', async () => {
+      const mockApplySessionUpdate = vi.fn();
+      let sessionUpdatedCallback: ((data: unknown) => void) | undefined;
+
+      const mockOn = vi.fn((event: string, callback: (data: unknown) => void) => {
+        if (event === 'session.updated') {
+          sessionUpdatedCallback = callback;
+        }
+      });
+      const mockOff = vi.fn();
+
+      vi.mocked(await import('../services/socket')).getSocket.mockReturnValue({
+        on: mockOn,
+        off: mockOff,
+      } as unknown as ReturnType<typeof import('../services/socket').getSocket>);
+
+      useSessionStore.setState({
+        session: mockSession,
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+        applySessionUpdate: mockApplySessionUpdate,
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(sessionUpdatedCallback).toBeDefined();
+      });
+
+      // Simulate receiving a session.updated event
+      sessionUpdatedCallback!({
+        projectId: 'proj1',
+        featureId: 'feat1',
+        sessionId: 'sess1',
+        updatedFields: { title: 'Updated Title' },
+        dataVersion: 2,
+        timestamp: '2024-01-01T01:00:00Z',
+      });
+
+      expect(mockApplySessionUpdate).toHaveBeenCalledWith(
+        'feat1',
+        { title: 'Updated Title' },
+        2
+      );
+    });
+  });
 });
