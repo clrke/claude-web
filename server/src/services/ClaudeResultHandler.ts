@@ -22,6 +22,7 @@ import {
   StepModificationResult,
 } from './stepModificationParser';
 import { setStepContentHash } from '../utils/stepContentHash';
+import { syncPlanFromMarkdown, getValidPlanMdPath, SyncResult } from '../utils/syncPlanFromMarkdown';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
   1: 'discovery',
@@ -183,12 +184,18 @@ export class ClaudeResultHandler {
    * Handle Stage 2 (Plan Review) result from Claude.
    * Also handles plan modifications when returning from Stage 3 blockers.
    * After saving plan updates, validates plan completeness and sets validation context if incomplete.
+   *
+   * Supports two modes of plan editing:
+   * 1. Marker-based: Claude outputs [PLAN_STEP] markers in response
+   * 2. Direct Edit: Claude uses Edit tool to modify plan.md directly
+   *
+   * For direct edits, we sync plan.json with plan.md after Claude completes.
    */
   async handleStage2Result(
     session: Session,
     result: ClaudeResult,
     prompt: string
-  ): Promise<{ allFiltered: boolean; planValidation?: PlanCompletenessResult }> {
+  ): Promise<{ allFiltered: boolean; planValidation?: PlanCompletenessResult; planSyncResult?: SyncResult }> {
     const sessionDir = `${session.projectId}/${session.featureId}`;
     const now = new Date().toISOString();
 
@@ -213,13 +220,17 @@ export class ClaudeResultHandler {
       console.log(`[Stage 2] Found ${planSteps.length} plan steps in file`);
     }
 
-    // Process step modifications (removals, edits, additions)
+    // Process step modifications (removals, edits, additions) from markers
     const modificationResult = await this.processStepModificationsForStage2(
       sessionDir,
       session,
       result.output,
       planSteps
     );
+
+    // After processing markers, also sync from plan.md in case Claude used Edit tool directly
+    // This handles the case where Claude edits plan.md without outputting markers
+    const planSyncResult = await this.syncPlanJsonFromMarkdown(sessionDir, session);
 
     // Save any new questions (review findings) with validation
     let allFiltered = false;
@@ -236,7 +247,66 @@ export class ClaudeResultHandler {
     // Validate plan completeness after Stage 2 session
     const planValidation = await this.validatePlanCompleteness(session, sessionDir);
 
-    return { allFiltered, planValidation };
+    return { allFiltered, planValidation, planSyncResult };
+  }
+
+  /**
+   * Sync plan.json with plan.md after Claude completes.
+   * This handles the case where Claude uses the Edit tool directly on plan.md
+   * instead of outputting [PLAN_STEP] markers.
+   *
+   * @returns The sync result, or undefined if sync wasn't needed/possible
+   */
+  private async syncPlanJsonFromMarkdown(
+    sessionDir: string,
+    session: Session
+  ): Promise<SyncResult | undefined> {
+    // Get the plan.md path from session
+    const planMdPath = getValidPlanMdPath(session.claudePlanFilePath);
+    if (!planMdPath) {
+      console.log(`[Stage 2] No valid plan.md path for ${session.featureId}, skipping sync`);
+      return undefined;
+    }
+
+    // Read current plan.json
+    const planPath = `${sessionDir}/plan.json`;
+    const currentPlan = await this.storage.readJson<Plan>(planPath);
+    if (!currentPlan) {
+      console.log(`[Stage 2] No plan.json found for ${session.featureId}, skipping sync`);
+      return undefined;
+    }
+
+    // Sync from plan.md
+    const syncResult = await syncPlanFromMarkdown(planMdPath, currentPlan);
+    if (!syncResult) {
+      console.log(`[Stage 2] Could not read plan.md for ${session.featureId}, skipping sync`);
+      return undefined;
+    }
+
+    const { syncResult: result, updatedPlan } = syncResult;
+
+    if (result.changed) {
+      // Save updated plan
+      await this.storage.writeJson(planPath, updatedPlan);
+      console.log(`[Stage 2] Synced plan.json from plan.md for ${session.featureId}: ${result.addedCount} added, ${result.updatedCount} updated, ${result.removedCount} removed`);
+
+      // Update session with modification tracking if there were changes
+      if (result.updatedStepIds.length > 0 || result.addedStepIds.length > 0 || result.removedStepIds.length > 0) {
+        await this.sessionManager.updateSession(
+          session.projectId,
+          session.featureId,
+          {
+            modifiedStepIds: result.updatedStepIds,
+            addedStepIds: result.addedStepIds,
+            removedStepIds: result.removedStepIds,
+          }
+        );
+      }
+    } else {
+      console.log(`[Stage 2] plan.md and plan.json are in sync for ${session.featureId}`);
+    }
+
+    return result;
   }
 
   /**
