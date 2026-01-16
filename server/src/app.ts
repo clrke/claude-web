@@ -3696,7 +3696,7 @@ Please ensure you output proper completion markers when done.`;
           result.session.status,
           result.session.currentStage,
           result.wasQueued,
-          result.session.queuePosition
+          result.session.queuePosition ?? null
         );
 
         // If not queued, the session is now active
