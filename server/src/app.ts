@@ -731,13 +731,20 @@ function shouldSkipUnchangedStep(step: PlanStep): boolean {
 
 /**
  * Get the next step ready for execution (respects dependencies).
+ * Returns the step with lowest orderIndex that is pending and has completed parents.
  */
 function getNextReadyStep(plan: Plan): PlanStep | null {
-  return plan.steps.find(step =>
+  const readySteps = plan.steps.filter(step =>
     step.status === 'pending' &&
     (step.parentId === null ||
       plan.steps.find(p => p.id === step.parentId)?.status === 'completed')
-  ) || null;
+  );
+
+  if (readySteps.length === 0) return null;
+
+  // Sort by orderIndex to ensure steps execute in order
+  readySteps.sort((a, b) => a.orderIndex - b.orderIndex);
+  return readySteps[0];
 }
 
 /**
