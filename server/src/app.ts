@@ -9,7 +9,7 @@ import { SessionManager } from './services/SessionManager';
 import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS } from './services/ClaudeOrchestrator';
 import { OutputParser } from './services/OutputParser';
 import { HaikuPostProcessor } from './services/HaikuPostProcessor';
-import { ClaudeResultHandler } from './services/ClaudeResultHandler';
+import { ClaudeResultHandler, StepModificationValidationError } from './services/ClaudeResultHandler';
 import { planCompletionChecker, PlanCompletenessResult } from './services/PlanCompletionChecker';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
@@ -50,6 +50,7 @@ import {
   getHeadCommitSha,
 } from './utils/stateVerification';
 import { extractValidationContext } from './utils/validationContextExtractor';
+import { escapeShellArg } from './utils/sanitizeInput';
 import type { ValidationLog } from './services/DecisionValidator';
 import type { ValidationContext } from '@claude-code-web/shared';
 import * as packageJson from '../package.json';
@@ -412,7 +413,27 @@ async function spawnStage2Review(
     await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster, planValidation);
 
     console.log(`Stage 2 review ${result.isError ? 'failed' : 'completed'} for ${session.featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
-  }).catch((error) => {
+  }).catch(async (error) => {
+    // Handle step modification validation errors by re-spawning Stage 2 with error context
+    if (error instanceof StepModificationValidationError) {
+      console.log(`[Stage 2] Re-spawning due to step modification validation errors for ${session.featureId}`);
+      const validationContext = `Your step modification output contained errors:\n${error.validationErrors.map(e => `- ${e}`).join('\n')}\n\nPlease fix these issues and try again.`;
+
+      // Re-fetch session and re-spawn with error context
+      const updatedSession = await sessionManager.getSession(session.projectId, session.featureId);
+      if (updatedSession) {
+        await spawnStage2Review(
+          updatedSession,
+          storage,
+          sessionManager,
+          resultHandler,
+          eventBroadcaster,
+          validationContext
+        );
+      }
+      return;
+    }
+
     console.error(`Stage 2 spawn error for ${session.featureId}:`, error);
     eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage2_spawn_error', { stage: 2 });
   });
@@ -479,11 +500,17 @@ async function handleStage2Completion(
         planValidation.missingContext
       );
 
-      // Update session with incremented attempt count
+      // Update session with incremented attempt count and clear modification tracking
+      // Clearing modification fields prevents stale data from leaking across re-spawn attempts
       await sessionManager.updateSession(
         session.projectId,
         session.featureId,
-        { planValidationAttempts: nextAttempt }
+        {
+          planValidationAttempts: nextAttempt,
+          modifiedStepIds: undefined,
+          addedStepIds: undefined,
+          removedStepIds: undefined,
+        }
       );
 
       // Build validation context prompt and re-spawn Stage 2
@@ -1292,14 +1319,17 @@ async function handleStage3Completion(
 
   // Clear modification tracking fields from Stage 2 revision (no longer needed)
   if (session.modifiedStepIds || session.addedStepIds || session.removedStepIds ||
-      session.originalCompletedStepIds || session.isPlanModificationSession) {
-    await sessionManager.updateSession(session.projectId, session.featureId, {
+      session.isPlanModificationSession) {
+    const clearedSession = await sessionManager.updateSession(session.projectId, session.featureId, {
       modifiedStepIds: undefined,
       addedStepIds: undefined,
       removedStepIds: undefined,
-      originalCompletedStepIds: undefined,
       isPlanModificationSession: undefined,
     });
+    // Notify clients that modification session has ended
+    if (clearedSession) {
+      eventBroadcaster?.sessionUpdated(clearedSession);
+    }
     console.log(`Cleared step modification tracking for ${session.featureId}`);
   }
 
@@ -1355,13 +1385,15 @@ async function prepareGitForPR(
     console.log(`[Stage 4] Current branch: ${currentBranch}`);
 
     // 2. Checkout feature branch if not already on it
+    // Use shell escaping to prevent command injection via branch names
+    const escapedBranch = escapeShellArg(featureBranch);
     if (currentBranch !== featureBranch) {
       try {
-        runGit(`git checkout ${featureBranch}`);
+        runGit(`git checkout ${escapedBranch}`);
         console.log(`[Stage 4] Checked out ${featureBranch}`);
       } catch {
         // Branch might not exist, create it
-        runGit(`git checkout -b ${featureBranch}`);
+        runGit(`git checkout -b ${escapedBranch}`);
         console.log(`[Stage 4] Created and checked out ${featureBranch}`);
       }
     }
@@ -1383,12 +1415,12 @@ async function prepareGitForPR(
     // 4. Push to remote
     console.log(`[Stage 4] Pushing to origin/${featureBranch}...`);
     try {
-      runGit(`git push -u origin ${featureBranch}`);
+      runGit(`git push -u origin ${escapedBranch}`);
       console.log(`[Stage 4] Pushed to remote`);
     } catch (pushError) {
       // Try force push if regular push fails (e.g., diverged history)
       console.log(`[Stage 4] Regular push failed, trying with --force-with-lease...`);
-      runGit(`git push -u origin ${featureBranch} --force-with-lease`);
+      runGit(`git push -u origin ${escapedBranch} --force-with-lease`);
       console.log(`[Stage 4] Force pushed to remote`);
     }
 
@@ -2534,17 +2566,14 @@ export function createApp(
           return res.status(400).json({ error: 'Plan not found for plan changes' });
         }
 
-        // Capture IDs of completed steps before entering modification session
-        const originalCompletedStepIds = plan.steps
-          .filter(s => s.status === 'completed')
-          .map(s => s.id);
+        // Count completed steps for logging
+        const completedStepCount = plan.steps.filter(s => s.status === 'completed').length;
 
         // Clear any previous modification tracking and initialize for new modification session
         await sessionManager.updateSession(projectId, featureId, {
           modifiedStepIds: undefined,
           addedStepIds: undefined,
           removedStepIds: undefined,
-          originalCompletedStepIds,
           isPlanModificationSession: true,
         });
 
@@ -2557,7 +2586,7 @@ export function createApp(
         const prompt = buildPlanRevisionPrompt(updatedSession, plan, feedback);
         await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
 
-        console.log(`Session ${featureId} returned to Stage 2 for plan changes (modification session with ${originalCompletedStepIds.length} completed steps)`);
+        console.log(`Session ${featureId} returned to Stage 2 for plan changes (modification session with ${completedStepCount} completed steps)`);
         res.json({ success: true, session: updatedSession });
 
       } else if (action === 're_review') {
@@ -2925,6 +2954,25 @@ After creating all steps, write the plan to a file and output:
             console.log(`Batch resume ${result.isError ? 'failed' : 'completed'} for ${featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
           }
         } catch (error) {
+          // Handle step modification validation errors by re-spawning Stage 2 with error context
+          if (error instanceof StepModificationValidationError) {
+            console.log(`[Batch Resume] Re-spawning Stage 2 due to step modification validation errors for ${featureId}`);
+            const validationContext = `Your step modification output contained errors:\n${error.validationErrors.map(e => `- ${e}`).join('\n')}\n\nPlease fix these issues and try again.`;
+
+            const updatedSession = await sessionManager.getSession(projectId, featureId);
+            if (updatedSession) {
+              await spawnStage2Review(
+                updatedSession,
+                storage,
+                sessionManager,
+                resultHandler,
+                eventBroadcaster,
+                validationContext
+              );
+            }
+            return;
+          }
+
           console.error(`Batch resume error for ${featureId}:`, error);
           eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'batch_resume_error', { stage: session.currentStage });
         }
@@ -3235,6 +3283,25 @@ After creating all steps, write the plan to a file and output:
 
           console.log(`Batch resume ${result.isError ? 'failed' : 'completed'} for ${featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
         } catch (error) {
+          // Handle step modification validation errors by re-spawning Stage 2 with error context
+          if (error instanceof StepModificationValidationError) {
+            console.log(`[Batch Answers] Re-spawning Stage 2 due to step modification validation errors for ${featureId}`);
+            const validationContext = `Your step modification output contained errors:\n${error.validationErrors.map(e => `- ${e}`).join('\n')}\n\nPlease fix these issues and try again.`;
+
+            const updatedSession = await sessionManager.getSession(projectId, featureId);
+            if (updatedSession) {
+              await spawnStage2Review(
+                updatedSession,
+                storage,
+                sessionManager,
+                resultHandler,
+                eventBroadcaster,
+                validationContext
+              );
+            }
+            return;
+          }
+
           console.error(`Batch resume error for ${featureId}:`, error);
           eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'batch_resume_error', { stage: session.currentStage });
         }
@@ -3438,7 +3505,26 @@ After creating all steps, write the plan to a file and output:
         await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
 
         console.log(`Plan revision ${result.isError ? 'failed' : 'completed'} for ${featureId}`);
-      }).catch((error) => {
+      }).catch(async (error) => {
+        // Handle step modification validation errors by re-spawning Stage 2 with error context
+        if (error instanceof StepModificationValidationError) {
+          console.log(`[Plan Revision] Re-spawning Stage 2 due to step modification validation errors for ${featureId}`);
+          const validationContext = `Your step modification output contained errors:\n${error.validationErrors.map(e => `- ${e}`).join('\n')}\n\nPlease fix these issues and try again.`;
+
+          const updatedSession = await sessionManager.getSession(projectId, featureId);
+          if (updatedSession) {
+            await spawnStage2Review(
+              updatedSession,
+              storage,
+              sessionManager,
+              resultHandler,
+              eventBroadcaster,
+              validationContext
+            );
+          }
+          return;
+        }
+
         console.error(`Plan revision spawn error for ${featureId}:`, error);
         eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'plan_revision_spawn_error', { stage: 2 });
       });

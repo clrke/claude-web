@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
 import { readFile } from 'fs/promises';
-import { FileStorageService } from '../data/FileStorageService';
+import { FileStorageService, PathTraversalError } from '../data/FileStorageService';
 import { SessionManager } from './SessionManager';
 import { ClaudeResult } from './ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog } from './DecisionValidator';
@@ -54,6 +55,20 @@ interface ConversationEntry {
   validationAction?: ValidationAction;
   /** 1-based index of the question for display purposes */
   questionIndex?: number;
+}
+
+/**
+ * Error thrown when step modification validation fails.
+ * Includes the list of validation errors for re-prompting context.
+ */
+export class StepModificationValidationError extends Error {
+  public readonly validationErrors: string[];
+
+  constructor(message: string, errors: string[]) {
+    super(message);
+    this.name = 'StepModificationValidationError';
+    this.validationErrors = errors;
+  }
 }
 
 interface ConversationsFile {
@@ -134,7 +149,7 @@ export class ClaudeResultHandler {
     let planSteps = result.parsed.planSteps;
     if (planSteps.length === 0 && result.parsed.planFilePath) {
       console.log(`No PLAN_STEP markers in output, reading from plan file: ${result.parsed.planFilePath}`);
-      planSteps = await this.parsePlanStepsFromFile(result.parsed.planFilePath);
+      planSteps = await this.parsePlanStepsFromFile(result.parsed.planFilePath, session.projectPath);
       console.log(`Found ${planSteps.length} plan steps in file`);
     }
     if (planSteps.length > 0) {
@@ -194,7 +209,7 @@ export class ClaudeResultHandler {
     let planSteps = result.parsed.planSteps;
     if (planSteps.length === 0 && result.parsed.planFilePath) {
       console.log(`[Stage 2] No PLAN_STEP markers in output, reading from plan file: ${result.parsed.planFilePath}`);
-      planSteps = await this.parsePlanStepsFromFile(result.parsed.planFilePath);
+      planSteps = await this.parsePlanStepsFromFile(result.parsed.planFilePath, session.projectPath);
       console.log(`[Stage 2] Found ${planSteps.length} plan steps in file`);
     }
 
@@ -267,9 +282,12 @@ export class ClaudeResultHandler {
       detectedNewIds
     );
 
-    // Log any validation errors but continue processing
+    // Reject the entire result if validation errors occurred
+    // This forces a re-prompt to Claude with the validation context
     if (modificationResult.errors.length > 0) {
-      console.warn(`[Stage 2] Step modification validation warnings for ${session.featureId}:`, modificationResult.errors);
+      const errorMessage = `Step modification validation failed for ${session.featureId}: ${modificationResult.errors.join('; ')}`;
+      console.error(`[Stage 2] ${errorMessage}`);
+      throw new StepModificationValidationError(errorMessage, modificationResult.errors);
     }
 
     // Apply step removals (includes cascade-deleted children)
@@ -1048,16 +1066,41 @@ export class ClaudeResultHandler {
   }
 
   /**
+   * Validate that a file path is within the allowed project directory.
+   * Prevents path traversal attacks via malicious planFilePath values.
+   */
+  private validatePlanFilePath(planFilePath: string, projectPath: string): void {
+    const normalizedProjectPath = path.resolve(projectPath);
+    const normalizedFilePath = path.resolve(planFilePath);
+
+    if (!normalizedFilePath.startsWith(normalizedProjectPath + path.sep) &&
+        normalizedFilePath !== normalizedProjectPath) {
+      throw new PathTraversalError(
+        `Plan file path traversal detected: ${planFilePath} is outside project directory ${projectPath}`
+      );
+    }
+  }
+
+  /**
    * Read plan file and parse PLAN_STEP markers from it.
    * Used when Claude writes a plan file but doesn't output markers in the response.
+   * @param planFilePath - The absolute path to the plan file
+   * @param projectPath - The project's root directory to validate against
    */
-  private async parsePlanStepsFromFile(planFilePath: string): Promise<ParsedPlanStep[]> {
+  private async parsePlanStepsFromFile(planFilePath: string, projectPath: string): Promise<ParsedPlanStep[]> {
     try {
+      // Validate path is within project directory to prevent path traversal
+      this.validatePlanFilePath(planFilePath, projectPath);
+
       const content = await readFile(planFilePath, 'utf-8');
       const parser = new OutputParser();
       return parser.parsePlanSteps(content);
     } catch (error) {
-      console.error(`Failed to read plan file ${planFilePath}:`, error);
+      if (error instanceof PathTraversalError) {
+        console.error(`[Security] Path traversal attempt blocked: ${error.message}`);
+      } else {
+        console.error(`Failed to read plan file ${planFilePath}:`, error);
+      }
       return [];
     }
   }

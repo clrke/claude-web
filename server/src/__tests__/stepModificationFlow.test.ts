@@ -97,31 +97,12 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 
 describe('Step Modification Flow - Stage 5 → Stage 2', () => {
   describe('plan_changes action initialization', () => {
-    it('should capture originalCompletedStepIds from completed steps', () => {
-      const steps: PlanStep[] = [
-        createMockStep('step-1', null, 'completed'),
-        createMockStep('step-2', null, 'completed'),
-        createMockStep('step-3', null, 'pending'),
-      ];
-      const plan = createMockPlan(steps);
-
-      // Simulate what plan_changes action does
-      const originalCompletedStepIds = plan.steps
-        .filter(s => s.status === 'completed')
-        .map(s => s.id);
-
-      expect(originalCompletedStepIds).toEqual(['step-1', 'step-2']);
-      expect(originalCompletedStepIds).not.toContain('step-3');
-    });
-
     it('should initialize isPlanModificationSession flag', () => {
       const session = createMockSession({
         isPlanModificationSession: true,
-        originalCompletedStepIds: ['step-1', 'step-2'],
       });
 
       expect(session.isPlanModificationSession).toBe(true);
-      expect(session.originalCompletedStepIds).toHaveLength(2);
     });
 
     it('should clear previous modification tracking fields', () => {
@@ -544,13 +525,6 @@ describe('Step Modification Flow - Full Integration', () => {
       steps.forEach(s => setStepContentHash(s));
       const plan = createMockPlan(steps);
 
-      // Stage 5: User requests plan changes
-      const originalCompletedStepIds = plan.steps
-        .filter(s => s.status === 'completed')
-        .map(s => s.id);
-
-      expect(originalCompletedStepIds).toHaveLength(3);
-
       // Stage 2: Claude modifies step-2 content
       const claudeOutput = `
 [STEP_MODIFICATIONS]
@@ -785,7 +759,6 @@ removed: ["step-2"]
         modifiedStepIds: ['step-1'],
         addedStepIds: ['step-3'],
         removedStepIds: ['step-2'],
-        originalCompletedStepIds: ['step-1', 'step-2'],
         isPlanModificationSession: true,
       });
 
@@ -793,7 +766,6 @@ removed: ["step-2"]
       expect(session.modifiedStepIds).toBeDefined();
       expect(session.addedStepIds).toBeDefined();
       expect(session.removedStepIds).toBeDefined();
-      expect(session.originalCompletedStepIds).toBeDefined();
       expect(session.isPlanModificationSession).toBe(true);
 
       // Simulate what handleStage3Completion does
@@ -801,7 +773,6 @@ removed: ["step-2"]
         modifiedStepIds: undefined,
         addedStepIds: undefined,
         removedStepIds: undefined,
-        originalCompletedStepIds: undefined,
         isPlanModificationSession: undefined,
       };
 
@@ -811,7 +782,6 @@ removed: ["step-2"]
       expect(clearedSession.modifiedStepIds).toBeUndefined();
       expect(clearedSession.addedStepIds).toBeUndefined();
       expect(clearedSession.removedStepIds).toBeUndefined();
-      expect(clearedSession.originalCompletedStepIds).toBeUndefined();
       expect(clearedSession.isPlanModificationSession).toBeUndefined();
     });
   });

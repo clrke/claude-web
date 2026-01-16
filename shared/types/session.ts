@@ -108,8 +108,6 @@ export interface Session {
   addedStepIds?: string[];
   /** IDs of steps that were removed during Stage 2 revision */
   removedStepIds?: string[];
-  /** IDs of steps that were completed before entering Stage 2 revision (for change detection) */
-  originalCompletedStepIds?: string[];
   /** Flag indicating this Stage 2 session is for plan modification (not initial planning) */
   isPlanModificationSession?: boolean;
 }

@@ -151,36 +151,81 @@ function parseArrayField(content: string, fieldName: string): string[] {
 }
 
 /**
+ * Maximum depth for cascade deletion to prevent DoS via deeply nested plans.
+ * 100 levels is more than sufficient for any realistic plan structure.
+ */
+const MAX_CASCADE_DEPTH = 100;
+
+/**
  * Find all child steps recursively (cascade deletion).
  * Returns all step IDs that are descendants of the given step IDs.
+ *
+ * Security: Includes depth limiting and cycle detection to prevent DoS attacks
+ * via malformed plans with circular parentId references or excessive nesting.
  */
 export function findCascadeDeletedSteps(
   stepsToRemove: string[],
   allSteps: PlanStep[]
 ): string[] {
   const cascadeDeleted: Set<string> = new Set();
-  const stepsToProcess = [...stepsToRemove];
   const processed = new Set<string>();
 
-  while (stepsToProcess.length > 0) {
-    const stepId = stepsToProcess.pop()!;
+  // Track ancestry path for cycle detection
+  const ancestryPath = new Set<string>();
+
+  // Build a parent->children index for efficient lookups
+  const childrenByParent = new Map<string, PlanStep[]>();
+  for (const step of allSteps) {
+    if (step.parentId) {
+      const siblings = childrenByParent.get(step.parentId) || [];
+      siblings.push(step);
+      childrenByParent.set(step.parentId, siblings);
+    }
+  }
+
+  function processStep(stepId: string, depth: number): void {
+    // Depth limit check
+    if (depth > MAX_CASCADE_DEPTH) {
+      console.warn(
+        `[Security] Cascade deletion depth limit (${MAX_CASCADE_DEPTH}) exceeded at step "${stepId}". ` +
+        `This may indicate a malformed plan structure.`
+      );
+      return;
+    }
+
+    // Cycle detection
+    if (ancestryPath.has(stepId)) {
+      console.warn(
+        `[Security] Circular parentId reference detected at step "${stepId}". ` +
+        `This indicates a malformed plan structure. Stopping cascade for this branch.`
+      );
+      return;
+    }
 
     if (processed.has(stepId)) {
-      continue;
+      return;
     }
     processed.add(stepId);
+    ancestryPath.add(stepId);
 
-    // Find all direct children of this step
-    const children = allSteps.filter(s => s.parentId === stepId);
+    // Find all direct children of this step using the index
+    const children = childrenByParent.get(stepId) || [];
 
     for (const child of children) {
       // Only add if not already in the original removal list
       if (!stepsToRemove.includes(child.id)) {
         cascadeDeleted.add(child.id);
       }
-      // Add to processing queue to find grandchildren
-      stepsToProcess.push(child.id);
+      // Recursively process grandchildren
+      processStep(child.id, depth + 1);
     }
+
+    ancestryPath.delete(stepId);
+  }
+
+  // Process each step to remove
+  for (const stepId of stepsToRemove) {
+    processStep(stepId, 0);
   }
 
   return Array.from(cascadeDeleted);
