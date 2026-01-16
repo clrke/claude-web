@@ -174,8 +174,62 @@ export function isBackoutAllowedForStatus(status: string): boolean {
 /** Array of statuses that allow backout, exported for use in validation messages */
 export const BACKOUT_ALLOWED_STATUS_LIST = [...BACKOUT_ALLOWED_STATUSES];
 
+/**
+ * Schema for editing a queued session (content fields only).
+ * Separate from UpdateSessionInputSchema to prevent editing of status/stage/queue fields.
+ * Requires version field for optimistic concurrency control.
+ */
+export const EditQueuedSessionInputSchema = z.object({
+  // Required: version field for optimistic concurrency control
+  version: z.number().int().min(1, 'Version must be a positive integer'),
+
+  // Optional content fields that can be edited
+  title: z
+    .string()
+    .min(1, 'Title is required')
+    .max(200, 'Title must be 200 characters or less')
+    .transform((s) => s.trim())
+    .optional(),
+
+  featureDescription: z
+    .string()
+    .min(1, 'Feature description is required')
+    .max(10000, 'Feature description must be 10000 characters or less')
+    .transform((s) => s.trim())
+    .optional(),
+
+  acceptanceCriteria: z.array(AcceptanceCriterionSchema).optional(),
+
+  affectedFiles: z
+    .array(
+      z
+        .string()
+        .min(1)
+        .max(500)
+        .refine((path) => !path.startsWith('/'), {
+          message: 'Affected files must be relative paths',
+        })
+    )
+    .optional(),
+
+  technicalNotes: z
+    .string()
+    .max(5000, 'Technical notes must be 5000 characters or less')
+    .transform((s) => s?.trim() ?? '')
+    .optional(),
+
+  baseBranch: z
+    .string()
+    .max(100)
+    .regex(gitBranchNamePattern, 'Invalid branch name')
+    .optional(),
+
+  preferences: UserPreferencesSchema.optional(),
+}).strict();
+
 export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
 export type UpdateSessionInput = z.infer<typeof UpdateSessionInputSchema>;
+export type EditQueuedSessionInput = z.infer<typeof EditQueuedSessionInputSchema>;
 export type StageTransitionInput = z.infer<typeof StageTransitionInputSchema>;
 export type AnswerQuestionInput = z.infer<typeof AnswerQuestionInputSchema>;
 export type BatchAnswersInput = z.infer<typeof BatchAnswersInputSchema>;
