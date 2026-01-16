@@ -468,8 +468,8 @@ During this session, some questions were filtered or repurposed by the validatio
 
 ### Filtered Questions
 The following questions were filtered out (not shown to user):
-${filteredQuestions.map((q, i) => `${i + 1}. **"${q.questionText}"**
-   - Reason: ${q.reason}`).join('\n')}`;
+${filteredQuestions.map((q, i) => `${i + 1}. **"${escapeMarkers(q.questionText)}"**
+   - Reason: ${escapeMarkers(q.reason)}`).join('\n')}`;
   }
 
   // Add repurposed questions section if any exist
@@ -480,10 +480,10 @@ ${filteredQuestions.map((q, i) => `${i + 1}. **"${q.questionText}"**
 The following questions were transformed into different questions:
 ${repurposedQuestions.map((q, i) => {
   const newQuestionsText = q.newQuestionTexts.length > 0
-    ? q.newQuestionTexts.map(t => `     - "${t}"`).join('\n')
+    ? q.newQuestionTexts.map(t => `     - "${escapeMarkers(t)}"`).join('\n')
     : '     - (no replacement questions)';
-  return `${i + 1}. **Original:** "${q.originalQuestionText}"
-   - Reason: ${q.reason}
+  return `${i + 1}. **Original:** "${escapeMarkers(q.originalQuestionText)}"
+   - Reason: ${escapeMarkers(q.reason)}
    - Replaced with:
 ${newQuestionsText}`;
 }).join('\n')}`;
@@ -1233,7 +1233,8 @@ Title: ${prInfo.title}
  */
 export function buildBatchAnswersContinuationPromptLean(
   answeredQuestions: Question[],
-  currentStage: number
+  currentStage: number,
+  validationContext?: ValidationContext | null
 ): string {
   const answers = answeredQuestions.map(q => {
     const answerText = typeof q.answer?.value === 'string'
@@ -1242,9 +1243,12 @@ export function buildBatchAnswersContinuationPromptLean(
     return `**Q:** ${q.questionText}\n**A:** ${answerText}`;
   }).join('\n\n');
 
+  // Format validation context section if provided (abbreviated for lean version)
+  const validationSection = formatValidationContextSection(validationContext);
+
   if (currentStage === 1) {
-    return `User answers:\n\n${answers}\n\nContinue discovery. More questions → [DECISION_NEEDED]. Ready → generate plan with [PLAN_STEP] markers.`;
+    return `User answers:\n\n${answers}${validationSection}\n\nContinue discovery. More questions → [DECISION_NEEDED]. Ready → generate plan with [PLAN_STEP] markers.`;
   }
 
-  return `User answers:\n\n${answers}\n\nContinue review. More issues → [DECISION_NEEDED]. All resolved → [PLAN_APPROVED].`;
+  return `User answers:\n\n${answers}${validationSection}\n\nContinue review. More issues → [DECISION_NEEDED]. All resolved → [PLAN_APPROVED].`;
 }

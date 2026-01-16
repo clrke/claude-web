@@ -2758,9 +2758,20 @@ Please pay special attention to the above areas during your review.`;
           if (allBatchAnswered && batchQuestions.length > 0) {
             console.log(`All ${batchQuestions.length} questions in batch answered, resuming Claude`);
 
-            // Build continuation prompt with all batch answers
-            const prompt = buildBatchAnswersContinuationPrompt(batchQuestions, session.currentStage, session.claudePlanFilePath);
             const sessionDir = `${projectId}/${featureId}`;
+
+            // Read validation logs to provide context about filtered/repurposed questions
+            let validationContext: ValidationContext | null = null;
+            try {
+              const validationLogsPath = `${sessionDir}/validation-logs.json`;
+              const validationLogs = await storage.readJson<{ entries: ValidationLog[] }>(validationLogsPath);
+              validationContext = extractValidationContext(validationLogs);
+            } catch (error) {
+              console.warn(`Failed to read validation logs for single answer endpoint: ${error}`);
+            }
+
+            // Build continuation prompt with all batch answers
+            const prompt = buildBatchAnswersContinuationPrompt(batchQuestions, session.currentStage, session.claudePlanFilePath, undefined, validationContext);
             const statusPath = `${sessionDir}/status.json`;
 
             // Update status to running
@@ -2992,9 +3003,15 @@ After creating all steps, write the plan to a file and output:
           const statusPath = `${sessionDir}/status.json`;
 
           // Read validation logs to provide context about filtered/repurposed questions
-          const validationLogsPath = `${sessionDir}/validation-logs.json`;
-          const validationLogs = await storage.readJson<{ entries: ValidationLog[] }>(validationLogsPath);
-          const validationContext = extractValidationContext(validationLogs);
+          let validationContext: ValidationContext | null = null;
+          try {
+            const validationLogsPath = `${sessionDir}/validation-logs.json`;
+            const validationLogs = await storage.readJson<{ entries: ValidationLog[] }>(validationLogsPath);
+            validationContext = extractValidationContext(validationLogs);
+          } catch (validationError) {
+            console.warn(`Failed to read validation logs for batch answers endpoint: ${validationError}`);
+            // Continue without validation context - this is non-critical
+          }
 
           const prompt = buildBatchAnswersContinuationPrompt(
             answeredQuestions,
