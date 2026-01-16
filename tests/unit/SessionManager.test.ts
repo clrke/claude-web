@@ -2752,4 +2752,508 @@ describe('SessionManager', () => {
       });
     });
   });
+
+  describe('editQueuedSession', () => {
+    const projectPath = '/Users/test/project';
+
+    describe('successful edits', () => {
+      it('should edit a queued session successfully', async () => {
+        // Create active session first
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session
+        const session = await manager.createSession({
+          title: 'Queued Session',
+          featureDescription: 'Original description',
+          projectPath,
+        });
+
+        expect(session.status).toBe('queued');
+        expect(session.dataVersion).toBe(1);
+
+        const result = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          1, // dataVersion
+          { title: 'Updated Title', featureDescription: 'Updated description' }
+        );
+
+        expect(result.session.title).toBe('Updated Title');
+        expect(result.session.featureDescription).toBe('Updated description');
+        expect(result.session.dataVersion).toBe(2);
+        expect(result.previousDataVersion).toBe(1);
+      });
+
+      it('should increment dataVersion on each edit', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session
+        const session = await manager.createSession({
+          title: 'Queued Session',
+          featureDescription: 'Original',
+          projectPath,
+        });
+
+        // First edit
+        let result = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          1,
+          { title: 'Edit 1' }
+        );
+        expect(result.session.dataVersion).toBe(2);
+
+        // Second edit
+        result = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          2,
+          { title: 'Edit 2' }
+        );
+        expect(result.session.dataVersion).toBe(3);
+
+        // Third edit
+        result = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          3,
+          { title: 'Edit 3' }
+        );
+        expect(result.session.dataVersion).toBe(4);
+      });
+
+      it('should update updatedAt timestamp', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session
+        const session = await manager.createSession({
+          title: 'Queued Session',
+          featureDescription: 'Original',
+          projectPath,
+        });
+
+        const originalUpdatedAt = session.updatedAt;
+
+        // Wait a tiny bit to ensure time difference
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        const result = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          1,
+          { title: 'Updated' }
+        );
+
+        expect(new Date(result.session.updatedAt).getTime())
+          .toBeGreaterThan(new Date(originalUpdatedAt).getTime());
+      });
+
+      it('should only update provided fields', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session with all fields
+        const session = await manager.createSession({
+          title: 'Original Title',
+          featureDescription: 'Original description',
+          projectPath,
+          technicalNotes: 'Original notes',
+          baseBranch: 'develop',
+          affectedFiles: ['src/app.ts'],
+        });
+
+        // Edit only the title
+        const result = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          1,
+          { title: 'Updated Title' }
+        );
+
+        expect(result.session.title).toBe('Updated Title');
+        expect(result.session.featureDescription).toBe('Original description');
+        expect(result.session.technicalNotes).toBe('Original notes');
+        expect(result.session.baseBranch).toBe('develop');
+        expect(result.session.affectedFiles).toEqual(['src/app.ts']);
+      });
+
+      it('should allow editing all content fields', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session
+        const session = await manager.createSession({
+          title: 'Queued Session',
+          featureDescription: 'Original',
+          projectPath,
+        });
+
+        const updates = {
+          title: 'New Title',
+          featureDescription: 'New description',
+          acceptanceCriteria: [{ text: 'AC 1', checked: false, type: 'manual' as const }],
+          affectedFiles: ['src/new.ts', 'src/other.ts'],
+          technicalNotes: 'New notes',
+          baseBranch: 'feature-branch',
+          preferences: {
+            riskComfort: 'high' as const,
+            speedVsQuality: 'quality' as const,
+            scopeFlexibility: 'open' as const,
+            detailLevel: 'detailed' as const,
+            autonomyLevel: 'autonomous' as const,
+          },
+        };
+
+        const result = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          1,
+          updates
+        );
+
+        expect(result.session.title).toBe('New Title');
+        expect(result.session.featureDescription).toBe('New description');
+        expect(result.session.acceptanceCriteria).toEqual(updates.acceptanceCriteria);
+        expect(result.session.affectedFiles).toEqual(updates.affectedFiles);
+        expect(result.session.technicalNotes).toBe('New notes');
+        expect(result.session.baseBranch).toBe('feature-branch');
+        expect(result.session.preferences).toEqual(updates.preferences);
+      });
+
+      it('should persist changes to storage', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session
+        const session = await manager.createSession({
+          title: 'Queued Session',
+          featureDescription: 'Original',
+          projectPath,
+        });
+
+        await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          1,
+          { title: 'Persisted Title' }
+        );
+
+        // Fetch session from storage again
+        const fetchedSession = await manager.getSession(session.projectId, session.featureId);
+        expect(fetchedSession?.title).toBe('Persisted Title');
+        expect(fetchedSession?.dataVersion).toBe(2);
+      });
+    });
+
+    describe('validation errors', () => {
+      it('should throw error for non-existent session', async () => {
+        await expect(
+          manager.editQueuedSession('nonexistent', 'feature', 1, { title: 'Test' })
+        ).rejects.toThrow(/not found/i);
+      });
+
+      it('should throw SESSION_NOT_QUEUED error for discovery status', async () => {
+        const session = await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        expect(session.status).toBe('discovery');
+
+        try {
+          await manager.editQueuedSession(
+            session.projectId,
+            session.featureId,
+            1,
+            { title: 'Test' }
+          );
+          fail('Should have thrown an error');
+        } catch (error) {
+          expect((error as NodeJS.ErrnoException).code).toBe('SESSION_NOT_QUEUED');
+          expect((error as Error).message).toContain("Cannot edit session with status 'discovery'");
+        }
+      });
+
+      it('should throw SESSION_NOT_QUEUED error for paused status', async () => {
+        // Create and pause a session
+        const session = await manager.createSession({
+          title: 'To Pause',
+          featureDescription: 'Test',
+          projectPath,
+        });
+        await manager.backoutSession(session.projectId, session.featureId, 'pause');
+
+        try {
+          await manager.editQueuedSession(
+            session.projectId,
+            session.featureId,
+            1,
+            { title: 'Test' }
+          );
+          fail('Should have thrown an error');
+        } catch (error) {
+          expect((error as NodeJS.ErrnoException).code).toBe('SESSION_NOT_QUEUED');
+          expect((error as Error).message).toContain("Cannot edit session with status 'paused'");
+        }
+      });
+
+      it('should throw SESSION_NOT_QUEUED error for completed status', async () => {
+        const session = await manager.createSession({
+          title: 'To Complete',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        // Transition to completed
+        await manager.transitionStage(session.projectId, session.featureId, 2);
+        await manager.transitionStage(session.projectId, session.featureId, 3);
+        await manager.transitionStage(session.projectId, session.featureId, 4);
+        await manager.transitionStage(session.projectId, session.featureId, 5);
+        await manager.transitionStage(session.projectId, session.featureId, 6);
+        await manager.transitionStage(session.projectId, session.featureId, 7);
+
+        const completed = await manager.getSession(session.projectId, session.featureId);
+        expect(completed?.status).toBe('completed');
+
+        try {
+          await manager.editQueuedSession(
+            session.projectId,
+            session.featureId,
+            1,
+            { title: 'Test' }
+          );
+          fail('Should have thrown an error');
+        } catch (error) {
+          expect((error as NodeJS.ErrnoException).code).toBe('SESSION_NOT_QUEUED');
+        }
+      });
+
+      it('should throw SESSION_NOT_QUEUED error for failed status', async () => {
+        const session = await manager.createSession({
+          title: 'To Fail',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        // Abandon the session (sets status to failed)
+        await manager.backoutSession(session.projectId, session.featureId, 'abandon');
+
+        try {
+          await manager.editQueuedSession(
+            session.projectId,
+            session.featureId,
+            1,
+            { title: 'Test' }
+          );
+          fail('Should have thrown an error');
+        } catch (error) {
+          expect((error as NodeJS.ErrnoException).code).toBe('SESSION_NOT_QUEUED');
+          expect((error as Error).message).toContain("Cannot edit session with status 'failed'");
+        }
+      });
+    });
+
+    describe('version conflict handling', () => {
+      it('should throw VERSION_CONFLICT error when dataVersion mismatches', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session
+        const session = await manager.createSession({
+          title: 'Queued Session',
+          featureDescription: 'Original',
+          projectPath,
+        });
+
+        expect(session.dataVersion).toBe(1);
+
+        try {
+          await manager.editQueuedSession(
+            session.projectId,
+            session.featureId,
+            999, // Wrong version
+            { title: 'Test' }
+          );
+          fail('Should have thrown an error');
+        } catch (error) {
+          expect((error as NodeJS.ErrnoException).code).toBe('VERSION_CONFLICT');
+          expect((error as Error).message).toContain('expected dataVersion 999');
+          expect((error as Error).message).toContain('has dataVersion 1');
+        }
+      });
+
+      it('should throw VERSION_CONFLICT on concurrent edits', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session
+        const session = await manager.createSession({
+          title: 'Queued Session',
+          featureDescription: 'Original',
+          projectPath,
+        });
+
+        // First edit succeeds
+        await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          1,
+          { title: 'First Edit' }
+        );
+
+        // Second edit with stale version fails
+        try {
+          await manager.editQueuedSession(
+            session.projectId,
+            session.featureId,
+            1, // Stale version
+            { title: 'Second Edit' }
+          );
+          fail('Should have thrown an error');
+        } catch (error) {
+          expect((error as NodeJS.ErrnoException).code).toBe('VERSION_CONFLICT');
+        }
+      });
+
+      it('should succeed with correct version after previous edit', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session
+        const session = await manager.createSession({
+          title: 'Queued Session',
+          featureDescription: 'Original',
+          projectPath,
+        });
+
+        // First edit
+        const result1 = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          1,
+          { title: 'First Edit' }
+        );
+
+        // Second edit with updated version
+        const result2 = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          result1.session.dataVersion, // Use new version
+          { title: 'Second Edit' }
+        );
+
+        expect(result2.session.title).toBe('Second Edit');
+        expect(result2.session.dataVersion).toBe(3);
+      });
+    });
+
+    describe('field preservation', () => {
+      it('should not modify protected session fields', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session
+        const session = await manager.createSession({
+          title: 'Queued Session',
+          featureDescription: 'Original',
+          projectPath,
+        });
+
+        const originalId = session.id;
+        const originalProjectId = session.projectId;
+        const originalFeatureId = session.featureId;
+        const originalCreatedAt = session.createdAt;
+        const originalStatus = session.status;
+        const originalQueuePosition = session.queuePosition;
+
+        const result = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          1,
+          { title: 'Updated Title' }
+        );
+
+        // Protected fields should remain unchanged
+        expect(result.session.id).toBe(originalId);
+        expect(result.session.projectId).toBe(originalProjectId);
+        expect(result.session.featureId).toBe(originalFeatureId);
+        expect(result.session.createdAt).toBe(originalCreatedAt);
+        expect(result.session.status).toBe(originalStatus);
+        expect(result.session.queuePosition).toBe(originalQueuePosition);
+      });
+
+      it('should not change featureId when title changes', async () => {
+        // Create active session
+        await manager.createSession({
+          title: 'Active Session',
+          featureDescription: 'Active',
+          projectPath,
+        });
+
+        // Create queued session
+        const session = await manager.createSession({
+          title: 'Original Title',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const originalFeatureId = session.featureId;
+
+        const result = await manager.editQueuedSession(
+          session.projectId,
+          session.featureId,
+          1,
+          { title: 'Completely Different Title' }
+        );
+
+        // featureId should NOT change even though title changed
+        // (changing featureId would break the session path)
+        expect(result.session.featureId).toBe(originalFeatureId);
+        expect(result.session.title).toBe('Completely Different Title');
+      });
+    });
+  });
 });

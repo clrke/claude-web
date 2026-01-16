@@ -177,11 +177,11 @@ export const BACKOUT_ALLOWED_STATUS_LIST = [...BACKOUT_ALLOWED_STATUSES];
 /**
  * Schema for editing a queued session (content fields only).
  * Separate from UpdateSessionInputSchema to prevent editing of status/stage/queue fields.
- * Requires version field for optimistic concurrency control.
+ * Requires dataVersion field for optimistic concurrency control.
  */
 export const EditQueuedSessionInputSchema = z.object({
-  // Required: version field for optimistic concurrency control
-  version: z.number().int().min(1, 'Version must be a positive integer'),
+  // Required: dataVersion field for optimistic concurrency control
+  dataVersion: z.number().int().min(1, 'Data version must be a positive integer'),
 
   // Optional content fields that can be edited
   title: z

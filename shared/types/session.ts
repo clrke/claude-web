@@ -61,6 +61,8 @@ export interface ExitSignals {
 
 export interface Session {
   version: string;
+  /** Numeric version for optimistic concurrency control; incremented on each edit */
+  dataVersion: number;
   id: string;
   projectId: string;
   featureId: string;

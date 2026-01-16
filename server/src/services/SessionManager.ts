@@ -38,7 +38,7 @@ const VALID_TRANSITIONS: Record<number, number[]> = {
 };
 
 // Fields that cannot be modified via updateSession
-const PROTECTED_FIELDS = ['id', 'projectId', 'featureId', 'version', 'createdAt'] as const;
+const PROTECTED_FIELDS = ['id', 'projectId', 'featureId', 'version', 'dataVersion', 'createdAt'] as const;
 
 export interface SessionManagerOptions {
   validateProjectPath?: boolean;
@@ -61,6 +61,24 @@ export interface ResumeResult {
   session: Session;
   /** Whether the session was queued (true) or immediately started (false) */
   wasQueued: boolean;
+}
+
+/** Content fields that can be edited on a queued session */
+export interface EditQueuedSessionUpdates {
+  title?: string;
+  featureDescription?: string;
+  acceptanceCriteria?: Session['acceptanceCriteria'];
+  affectedFiles?: string[];
+  technicalNotes?: string;
+  baseBranch?: string;
+  preferences?: Session['preferences'];
+}
+
+export interface EditQueuedSessionResult {
+  /** The updated session after editing */
+  session: Session;
+  /** The dataVersion that was used for the edit (for confirmation) */
+  previousDataVersion: number;
 }
 
 export class SessionManager {
@@ -241,6 +259,7 @@ export class SessionManager {
     // Create session.json
     const session: Session = {
       version: '1.0',
+      dataVersion: 1,
       id: sessionId,
       projectId,
       featureId,
@@ -786,6 +805,98 @@ export class SessionManager {
     return {
       session: updatedSession,
       wasQueued,
+    };
+  }
+
+  /**
+   * Edit a queued session's content fields with optimistic concurrency control.
+   * Only sessions with status === 'queued' can be edited.
+   *
+   * @param projectId - The project ID
+   * @param featureId - The feature ID
+   * @param dataVersion - Expected data version for optimistic concurrency
+   * @param updates - Content field updates (title, featureDescription, etc.)
+   * @returns EditQueuedSessionResult with updated session
+   * @throws Error if session not found
+   * @throws Error with code 'SESSION_NOT_QUEUED' if session is not in queued status
+   * @throws Error with code 'VERSION_CONFLICT' if dataVersion doesn't match
+   */
+  async editQueuedSession(
+    projectId: string,
+    featureId: string,
+    dataVersion: number,
+    updates: EditQueuedSessionUpdates
+  ): Promise<EditQueuedSessionResult> {
+    const session = await this.getSession(projectId, featureId);
+
+    if (!session) {
+      throw new Error(`Session not found: ${projectId}/${featureId}`);
+    }
+
+    // Validate session is in queued status
+    if (session.status !== 'queued') {
+      const error = new Error(
+        `Cannot edit session with status '${session.status}'. ` +
+        `Only queued sessions can be edited.`
+      );
+      (error as NodeJS.ErrnoException).code = 'SESSION_NOT_QUEUED';
+      throw error;
+    }
+
+    // Check optimistic concurrency - dataVersion must match
+    if (session.dataVersion !== dataVersion) {
+      const error = new Error(
+        `Version conflict: expected dataVersion ${dataVersion}, but session has dataVersion ${session.dataVersion}. ` +
+        `The session was modified by another request.`
+      );
+      (error as NodeJS.ErrnoException).code = 'VERSION_CONFLICT';
+      throw error;
+    }
+
+    const now = new Date().toISOString();
+
+    // Build the update object with only provided fields
+    const sessionUpdates: Partial<Session> = {
+      updatedAt: now,
+      dataVersion: session.dataVersion + 1, // Increment version
+    };
+
+    // Apply content updates
+    if (updates.title !== undefined) {
+      sessionUpdates.title = updates.title;
+      // Note: We don't update featureId as that would break the session path
+    }
+    if (updates.featureDescription !== undefined) {
+      sessionUpdates.featureDescription = updates.featureDescription;
+    }
+    if (updates.acceptanceCriteria !== undefined) {
+      sessionUpdates.acceptanceCriteria = updates.acceptanceCriteria;
+    }
+    if (updates.affectedFiles !== undefined) {
+      sessionUpdates.affectedFiles = updates.affectedFiles;
+    }
+    if (updates.technicalNotes !== undefined) {
+      sessionUpdates.technicalNotes = updates.technicalNotes;
+    }
+    if (updates.baseBranch !== undefined) {
+      sessionUpdates.baseBranch = updates.baseBranch;
+    }
+    if (updates.preferences !== undefined) {
+      sessionUpdates.preferences = updates.preferences;
+    }
+
+    // Write updated session directly (bypassing updateSession to allow dataVersion update)
+    const updatedSession: Session = {
+      ...session,
+      ...sessionUpdates,
+    };
+
+    const sessionPath = this.getSessionPath(projectId, featureId);
+    await this.storage.writeJson(`${sessionPath}/session.json`, updatedSession);
+
+    return {
+      session: updatedSession,
+      previousDataVersion: dataVersion,
     };
   }
 }
