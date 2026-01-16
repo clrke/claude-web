@@ -403,10 +403,26 @@ async function spawnStage2Review(
       );
     }
 
-    // Auto-approve plan if all questions were filtered as false positives
-    if (allFiltered && result.parsed.decisions.length > 0) {
-      console.log(`All ${result.parsed.decisions.length} question(s) filtered - auto-approving plan for ${session.featureId}`);
-      result.parsed.planApproved = true;
+    // If all questions were filtered, re-spawn Stage 2 with validation context
+    // instead of auto-approving (let Claude ask new questions or complete review)
+    if (allFiltered && result.parsed.decisions.length > 0 && !result.parsed.planApproved) {
+      console.log(`All ${result.parsed.decisions.length} question(s) filtered - re-spawning Stage 2 with validation context for ${session.featureId}`);
+
+      // Extract validation context from logs to show Claude what was filtered and why
+      const validationLogs = await storage.readJson<{ entries: ValidationLog[] }>(`${sessionDir}/validation-logs.json`);
+      const validationContext = extractValidationContext(validationLogs);
+
+      // Build continuation prompt with validation context (empty answers, just continuing after filtered)
+      const continuePrompt = buildBatchAnswersContinuationPrompt(
+        [], // No answered questions - just continuing after filtered
+        2,  // Stage 2
+        session.claudePlanFilePath,
+        'All your questions were filtered. Please continue reviewing the plan - ask different questions that require user decisions, or output [PLAN_APPROVED] if ready.',
+        validationContext
+      );
+
+      await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, continuePrompt);
+      return;
     }
 
     // Check for auto Stage 2→3 transition (pass planValidation for structure check)
@@ -2866,10 +2882,18 @@ Please pay special attention to the above areas during your review.`;
             } else if (session.currentStage === 2) {
               const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
               await resultHandler.incrementReviewCount(sessionDir);
-              // Auto-approve plan if all questions were filtered as false positives
-              if (allFiltered && result.parsed.decisions.length > 0) {
-                console.log(`All ${result.parsed.decisions.length} question(s) filtered - auto-approving plan for ${featureId}`);
-                result.parsed.planApproved = true;
+              // If all questions were filtered, re-spawn Stage 2 with validation context
+              if (allFiltered && result.parsed.decisions.length > 0 && !result.parsed.planApproved) {
+                console.log(`All ${result.parsed.decisions.length} question(s) filtered - re-spawning Stage 2 with validation context for ${featureId}`);
+                const validationLogs = await storage.readJson<{ entries: ValidationLog[] }>(`${sessionDir}/validation-logs.json`);
+                const validationContext = extractValidationContext(validationLogs);
+                const continuePrompt = buildBatchAnswersContinuationPrompt(
+                  [], 2, session.claudePlanFilePath,
+                  'All your questions were filtered. Please continue reviewing the plan - ask different questions that require user decisions, or output [PLAN_APPROVED] if ready.',
+                  validationContext
+                );
+                await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, continuePrompt);
+                return;
               }
               // Check for Stage 2→3 auto-transition
               await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
@@ -3134,10 +3158,18 @@ After creating all steps, write the plan to a file and output:
           } else if (session.currentStage === 2) {
             const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
             await resultHandler.incrementReviewCount(sessionDir);
-            // Auto-approve plan if all questions were filtered as false positives
-            if (allFiltered && result.parsed.decisions.length > 0) {
-              console.log(`All ${result.parsed.decisions.length} question(s) filtered - auto-approving plan for ${featureId}`);
-              result.parsed.planApproved = true;
+            // If all questions were filtered, re-spawn Stage 2 with validation context
+            if (allFiltered && result.parsed.decisions.length > 0 && !result.parsed.planApproved) {
+              console.log(`All ${result.parsed.decisions.length} question(s) filtered - re-spawning Stage 2 with validation context for ${featureId}`);
+              const validationLogs = await storage.readJson<{ entries: ValidationLog[] }>(`${sessionDir}/validation-logs.json`);
+              const validationContext = extractValidationContext(validationLogs);
+              const continuePrompt = buildBatchAnswersContinuationPrompt(
+                [], 2, session.claudePlanFilePath,
+                'All your questions were filtered. Please continue reviewing the plan - ask different questions that require user decisions, or output [PLAN_APPROVED] if ready.',
+                validationContext
+              );
+              await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, continuePrompt);
+              return;
             }
             await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
           } else if (session.currentStage === 3) {
@@ -3492,10 +3524,18 @@ After creating all steps, write the plan to a file and output:
           );
         }
 
-        // Auto-approve plan if all questions were filtered as false positives
-        if (allFiltered && result.parsed.decisions.length > 0) {
-          console.log(`All ${result.parsed.decisions.length} question(s) filtered - auto-approving plan for ${featureId}`);
-          result.parsed.planApproved = true;
+        // If all questions were filtered, re-spawn Stage 2 with validation context
+        if (allFiltered && result.parsed.decisions.length > 0 && !result.parsed.planApproved) {
+          console.log(`All ${result.parsed.decisions.length} question(s) filtered - re-spawning Stage 2 with validation context for ${featureId}`);
+          const validationLogs = await storage.readJson<{ entries: ValidationLog[] }>(`${sessionDir}/validation-logs.json`);
+          const validationContext = extractValidationContext(validationLogs);
+          const continuePrompt = buildBatchAnswersContinuationPrompt(
+            [], 2, session.claudePlanFilePath,
+            'All your questions were filtered. Please continue reviewing the plan - ask different questions that require user decisions, or output [PLAN_APPROVED] if ready.',
+            validationContext
+          );
+          await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, continuePrompt);
+          return;
         }
 
         // Check for auto Stage 2→3 transition if plan was approved after revision

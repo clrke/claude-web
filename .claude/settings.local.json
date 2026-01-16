@@ -13,7 +13,8 @@
       "Bash(SESSION_DIR=/Users/arke/Projects/virtual-dev/.virtual-dev/c36c4f449192026ca999ef7f3fae2a8d/implement-stage-3-loop echo:*)",
       "Bash(kill:*)",
       "Bash(./scripts/poll-session.sh:*)",
-      "Bash(true pkill -f concurrently.*dev:server)"
+      "Bash(true pkill -f concurrently.*dev:server)",
+      "Bash(git remote set-url:*)"
     ]
   }
 }
