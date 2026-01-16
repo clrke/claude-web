@@ -1,7 +1,8 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import path from 'path';
 import crypto from 'crypto';
-import { computeStepHash, isStepContentUnchanged, computePlanHash, savePlanSnapshot } from './utils/stepContentHash';
+import { computeStepHash, isStepContentUnchanged, computePlanHash, savePlanSnapshot, hasPlanChangedSinceSnapshot, deletePlanSnapshot } from './utils/stepContentHash';
+import { syncPlanFromMarkdown, getValidPlanMdPath } from './utils/syncPlanFromMarkdown';
 import { readFile } from 'fs/promises';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
@@ -1749,6 +1750,52 @@ async function handleStage5Result(
     conversations.entries.push(entryData);
   }
   await storage.writeJson(conversationsPath, conversations);
+
+  // Sync plan.json with plan.md after Claude completes
+  // This handles the case where Claude uses the Edit tool directly on plan.md
+  // instead of outputting [PLAN_STEP] markers. Must happen before hash comparison.
+  const planMdPath = getValidPlanMdPath(session.claudePlanFilePath);
+  if (planMdPath) {
+    const planPath = `${sessionDir}/plan.json`;
+    const currentPlan = await storage.readJson<Plan>(planPath);
+    if (currentPlan) {
+      const syncResult = await syncPlanFromMarkdown(planMdPath, currentPlan);
+      if (syncResult?.syncResult.changed) {
+        await storage.writeJson(planPath, syncResult.updatedPlan);
+        console.log(`[Stage 5] Synced plan.json from plan.md for ${session.featureId}: ${syncResult.syncResult.addedCount} added, ${syncResult.syncResult.updatedCount} updated, ${syncResult.syncResult.removedCount} removed`);
+      } else if (syncResult) {
+        console.log(`[Stage 5] plan.md and plan.json are in sync for ${session.featureId}`);
+      }
+    }
+  }
+
+  // Check if plan was changed during Stage 5 using deterministic hash comparison
+  const physicalSessionDir = storage.getAbsolutePath(sessionDir);
+  const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+  if (plan) {
+    const changeResult = hasPlanChangedSinceSnapshot(physicalSessionDir, plan);
+    if (changeResult?.changed) {
+      console.log(`[Stage 5] Plan changed during PR review for ${session.featureId} - transitioning to Stage 2`);
+
+      // Clean up snapshot
+      deletePlanSnapshot(physicalSessionDir);
+
+      // Transition back to Stage 2 for plan review
+      const previousStage = session.currentStage;
+      const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 2);
+      eventBroadcaster?.stageChanged(updatedSession, previousStage);
+
+      // Build plan revision prompt
+      const revisionFeedback = 'Plan steps were modified during PR review. Please review the updated plan.';
+      const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback);
+      await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, revisionPrompt);
+
+      return;
+    } else {
+      // Clean up snapshot after successful comparison
+      deletePlanSnapshot(physicalSessionDir);
+    }
+  }
 
   // Check for CI failure - requires return to Stage 2
   if (result.parsed.ciFailed || result.parsed.returnToStage2) {
