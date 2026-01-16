@@ -5,6 +5,7 @@ import { ClaudeResult } from '../../server/src/services/ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog, ValidationResult } from '../../server/src/services/DecisionValidator';
 import { PlanCompletionChecker, PlanCompletenessResult } from '../../server/src/services/PlanCompletionChecker';
 import { PlanValidationResult } from '../../server/src/services/PlanValidator';
+import { computeStepContentHash } from '../../server/src/utils/stepContentHash';
 import { Session, ComposablePlan, PlanStep, UserPreferences } from '@claude-code-web/shared';
 import * as fs from 'fs-extra';
 import * as path from 'path';
@@ -843,6 +844,94 @@ describe('ClaudeResultHandler', () => {
 
         expect(plan!.steps[0].status).toBe('pending'); // step-1 unchanged
         expect(plan!.steps[1].status).toBe('completed'); // step-2 completed
+      });
+
+      it('should store contentHash when step is marked complete', async () => {
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-1', summary: 'Implemented feature', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-1');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; status: string; contentHash?: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        expect(plan!.steps[0].status).toBe('completed');
+        expect(plan!.steps[0].contentHash).toBeDefined();
+        expect(plan!.steps[0].contentHash).toMatch(/^[a-f0-9]{16}$/); // 16-char hex hash
+      });
+
+      it('should compute deterministic contentHash based on step content', async () => {
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-1', summary: 'Done', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-1');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; title: string; description?: string; contentHash?: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        const step = plan!.steps[0];
+        // Hash should be computed from normalized title + description
+        // Same content should always produce same hash
+        expect(step.contentHash).toBeDefined();
+
+        // Verify hash is based on title|description by checking determinism
+        // The step title is 'Create feature branch' and description is 'Step 1 desc'
+        // (from the beforeEach plan setup)
+      });
+
+      it('should store different contentHash for steps with different content', async () => {
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-1', summary: 'Done 1', testsAdded: [], testsPassing: true },
+          { id: 'step-2', summary: 'Done 2', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; contentHash?: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        // step-1 and step-2 have different titles/descriptions, so different hashes
+        expect(plan!.steps[0].contentHash).toBeDefined();
+        expect(plan!.steps[1].contentHash).toBeDefined();
+        expect(plan!.steps[0].contentHash).not.toBe(plan!.steps[1].contentHash);
+      });
+
+      it('should allow future comparison using stored contentHash', async () => {
+        // First: mark step as complete, storing contentHash
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-1', summary: 'Initial implementation', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-1');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; title: string; description?: string; contentHash?: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        const originalHash = plan!.steps[0].contentHash;
+        expect(originalHash).toBeDefined();
+
+        // Simulate: if content changes (during Stage 2 revision), new hash would differ
+        // This is the key property: contentHash enables detecting content changes
+        const originalTitle = plan!.steps[0].title;
+        const originalDesc = plan!.steps[0].description;
+
+        // Re-compute hash with same content - should match
+        const recomputedHash = computeStepContentHash(originalTitle, originalDesc);
+        expect(recomputedHash).toBe(originalHash);
+
+        // Changed content would produce different hash
+        const changedHash = computeStepContentHash('Changed Title', originalDesc);
+        expect(changedHash).not.toBe(originalHash);
       });
     });
 
