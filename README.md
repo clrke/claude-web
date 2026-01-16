@@ -59,86 +59,191 @@ If automated checks fail, Claude attempts auto-fix (max 3 attempts) before pausi
 
 ## Workflow Architecture
 
-```mermaid
-flowchart TB
-    subgraph Stage1["Stage 1: Feature Discovery"]
-        A["User submits feature template"] --> B["Subagents study codebase"]
-        B --> C["Present clarifying questions<br/>(structured forms)"]
-        C --> D["User answers"]
-        D --> E{"More questions?"}
-        E -->|Yes| C
-        E -->|No| F["Generate initial plan"]
-    end
+The workflow consists of 6 stages, each with distinct responsibilities. Claude Web orchestrates these stages while Claude Code executes tasks within each stage.
 
-    subgraph Stage2["Stage 2: Plan Review (10x recommended)"]
-        F --> G["Display plan in visual editor"]
-        G --> H["Subagents review for issues"]
-        H --> I["Present findings as forms"]
-        I --> J["User reviews & answers"]
-        J --> K{"Approve iteration?"}
-        K -->|No, needs work| L["Refine plan"]
-        L --> G
-        K -->|Yes| M{"Review count"}
-        M -->|"< 10x"| N["Warning: Recommend more review"]
-        M -->|">= 10x"| O["Ready for implementation"]
-        N --> P{"User sign-off?"}
-        P -->|Continue reviewing| G
-        P -->|Proceed anyway| O
-    end
+### Stage Overview
 
-    subgraph Stage3["Stage 3: Implementation"]
-        O --> Q["Execute plan step"]
-        Q --> BLOCK{"Critical blocker?"}
-        BLOCK -->|Yes| PAUSE["Pause immediately"]
-        PAUSE --> ASKUSER["Present blocker to user"]
-        ASKUSER --> GUIDANCE["User provides guidance"]
-        GUIDANCE --> Q
-        BLOCK -->|No| COLLECT["Server collects<br/>TODO/FIXME comments"]
-        COLLECT --> R2{"Validated items?"}
-        R2 -->|Yes| TODO["Return to Stage 2"]
-        TODO --> G
-        R2 -->|No| X{"More steps?"}
-        X -->|Yes| Q
-        X -->|No| Z2["Implementation complete"]
-    end
+| Stage | Purpose | Claude Code Tools | User Interaction |
+|-------|---------|-------------------|------------------|
+| **1. Discovery** | Explore codebase, ask questions, create plan | Read, Glob, Grep, Task | Answer clarifying questions |
+| **2. Plan Review** | Review and refine plan iteratively | Read, Glob, Grep, Task | Approve/reject plan changes |
+| **3. Implementation** | Execute approved plan steps | Read, Write, Edit, Bash, Glob, Grep, Task | Handle blockers |
+| **4. PR Creation** | Create pull request from changes | Read, Bash (git/gh only) | None (automated) |
+| **5. PR Review** | Review PR for issues, wait for CI | Read, Glob, Grep, Task, Bash (diff/pr only) | Decide on issues |
+| **6. Final Approval** | User decides to merge or iterate | N/A | Merge, request changes, or re-review |
 
-    subgraph Stage4["Stage 4: PR Creation"]
-        Z2 --> Z["Generate PR"]
-        Z --> AA["Display PR details"]
-        AA --> AB["Record PR number"]
-    end
+---
 
-    subgraph Stage5["Stage 5: PR Review"]
-        AB --> AC["Spawn subagents in parallel<br/>(review + CI Agent)"]
-        AC --> WAIT{"All results ready?"}
-        WAIT -->|No| AC
-        WAIT -->|Yes| CHECK{"Issues or CI failures?"}
-        CHECK -->|Issues found| AF["Present issues<br/>as decisions"]
-        AF --> AG["User decides action"]
-        AG --> REPLAN["Return to Stage 2<br/>(update plan)"]
-        REPLAN --> G
-        CHECK -->|CI failing| CIFIX["Present CI failures<br/>as decisions"]
-        CIFIX --> AG
-        CHECK -->|All clear| AI["PR approved by Claude"]
-    end
+### Stage 1: Feature Discovery
 
-    subgraph Stage6["Stage 6: Final Approval"]
-        AI --> FA["User reviews PR"]
-        FA --> DECIDE{"User decision"}
-        DECIDE -->|Complete| DONE["Session completed<br/>(ready to merge)"]
-        DECIDE -->|Request changes| PLAN["Return to Stage 2"]
-        PLAN --> G
-        DECIDE -->|Re-review| REVIEW["Return to Stage 5"]
-        REVIEW --> AC
-    end
+**Purpose:** Understand the codebase and gather requirements through structured questions.
 
-    style Stage1 fill:#334155,color:#fff
-    style Stage2 fill:#475569,color:#fff
-    style Stage3 fill:#1e3a5f,color:#fff
-    style Stage4 fill:#374151,color:#fff
-    style Stage5 fill:#1f2937,color:#fff
-    style Stage6 fill:#065f46,color:#fff
+**Flow:**
 ```
+User submits feature → Subagents explore codebase → Ask clarifying questions → User answers → Generate plan
+```
+
+**What happens:**
+1. User fills out feature template (title, description, acceptance criteria)
+2. Claude spawns parallel subagents to explore project structure, patterns, and conventions
+3. Questions are presented progressively by priority (P1 fundamentals → P2 details → P3 refinements)
+4. Claude generates an implementation plan based on answers
+
+**Outputs:**
+- `plan.md` - Human-readable plan file in `~/.claude-web/<sessionId>/`
+- `plan.json` - Structured plan with steps
+- Transitions to Stage 2
+
+**Key markers parsed:**
+- `[DECISION_NEEDED]` - Questions for user
+- `[PLAN_FILE path="..."]` - Plan file location
+- `[PLAN_APPROVED]` - Ready for implementation
+
+---
+
+### Stage 2: Plan Review
+
+**Purpose:** Iteratively review the plan for issues before implementation. 10 review cycles recommended.
+
+**Flow:**
+```
+Display plan → Subagents review → Present findings → User answers → Refine plan → Repeat
+```
+
+**What happens:**
+1. Domain-specific subagents review the plan (Frontend, Backend, Database, Integration, Test)
+2. Issues categorized: Code Quality, Architecture, Security, Performance
+3. User answers presented as decisions with recommended options
+4. Plan updated immediately based on user choices
+5. Review counter tracks iterations (warning if < 10 reviews)
+
+**Outputs:**
+- Updated `plan.json` with refined steps
+- `reviews.json` - Review iteration history
+- Transitions to Stage 3 when user approves
+
+**This is the only stage that can modify the plan.** Stages 3 and 5 return here for plan updates.
+
+---
+
+### Stage 3: Implementation
+
+**Purpose:** Execute the approved plan step-by-step.
+
+**Flow:**
+```
+For each step: Execute → Check for blockers → Collect TODO comments → Continue or return to Stage 2
+```
+
+**What happens:**
+1. Steps executed sequentially with `[STEP_COMPLETE]` markers
+2. **Critical blockers** pause immediately and ask user via `[DECISION_NEEDED]`
+3. **Non-critical items** collected via code comments (`// TODO:`, `// FIXME:`)
+4. After each step, server diffs files and validates collected items via Haiku
+5. If validated items found → returns to Stage 2 for plan update
+6. **Step content hash** tracks if steps changed - unchanged steps are skipped on re-runs
+
+**Outputs:**
+- Modified codebase files
+- `[IMPLEMENTATION_COMPLETE]` marker when done
+- Transitions to Stage 4
+
+**Special behaviors:**
+- Uses `--dangerously-skip-permissions` for uninterrupted execution
+- Auto-fix attempts for build/test failures (max 3 attempts)
+- Circuit breaker halts execution if stuck in loops
+
+---
+
+### Stage 4: PR Creation
+
+**Purpose:** Create a pull request from the implemented changes.
+
+**Flow:**
+```
+Review changes → Verify git state → Commit and push → Create/update PR
+```
+
+**What happens:**
+1. Subagents analyze git diff and commit history
+2. Server ensures correct branch and commits any uncommitted changes
+3. PR created via `gh pr create` (or updated if existing)
+4. PR details recorded for Stage 5
+
+**Outputs:**
+- PR created on GitHub
+- `pr.json` - PR metadata (number, URL, title)
+- `[PR_CREATED]` marker with PR details
+- Transitions to Stage 5
+
+---
+
+### Stage 5: PR Review
+
+**Purpose:** Automated review of the PR with fresh eyes, plus CI status monitoring.
+
+**Flow:**
+```
+Spawn review agents → Wait for CI → Present issues → User decides → Fix or approve
+```
+
+**What happens:**
+1. Context compacted and refreshed (removes implementation bias)
+2. Parallel review subagents check different domains
+3. CI Agent monitors `gh pr checks` for pass/fail
+4. Issues batched in `[REVIEW_CHECKPOINT]` blocks
+5. User decides: fix now, create follow-up ticket, or accept risk
+6. If fixes needed → returns to Stage 2 for plan update
+
+**Outputs:**
+- `[CI_STATUS]` - CI check results
+- `[DECISION_NEEDED]` - Issues for user to decide
+- `[PR_APPROVED]` - PR ready for merge
+- Transitions to Stage 6 when approved
+
+**Important:** Claude reviews with "fresh eyes" - evaluates as if it didn't write the code.
+
+---
+
+### Stage 6: Final Approval
+
+**Purpose:** Human decision point before merge.
+
+**User options:**
+| Action | Result |
+|--------|--------|
+| **Complete Session** | Session marked `completed`, PR ready to merge |
+| **Request Changes** | Returns to Stage 2 with user feedback |
+| **Re-Review PR** | Returns to Stage 5 with focus areas |
+
+This ensures the human always makes the final call on merging code.
+
+---
+
+### Stage Transitions Diagram
+
+```mermaid
+flowchart LR
+    S1[Stage 1<br/>Discovery] --> S2[Stage 2<br/>Plan Review]
+    S2 --> S3[Stage 3<br/>Implementation]
+    S3 --> S4[Stage 4<br/>PR Creation]
+    S4 --> S5[Stage 5<br/>PR Review]
+    S5 --> S6[Stage 6<br/>Final Approval]
+
+    S3 -.->|blocker/TODO| S2
+    S5 -.->|issues found| S2
+    S6 -.->|request changes| S2
+    S6 -.->|re-review| S5
+
+    style S1 fill:#334155,color:#fff
+    style S2 fill:#475569,color:#fff
+    style S3 fill:#1e3a5f,color:#fff
+    style S4 fill:#374151,color:#fff
+    style S5 fill:#1f2937,color:#fff
+    style S6 fill:#065f46,color:#fff
+```
+
+**Key principle:** Stage 2 is the single source of truth for plan modifications. All other stages return to Stage 2 when changes are needed.
 
 ## System Architecture
 
