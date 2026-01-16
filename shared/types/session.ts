@@ -10,6 +10,15 @@ export type SessionStatus =
   | 'paused'
   | 'failed';
 
+/** Reason why a session was backed out (paused or abandoned) */
+export type BackoutReason =
+  | 'user_requested'   // User explicitly requested to back out
+  | 'blocked'          // Session is blocked by external dependency
+  | 'deprioritized';   // Session priority lowered in favor of other work
+
+/** All valid backout reason values for runtime validation */
+export const BACKOUT_REASONS: BackoutReason[] = ['user_requested', 'blocked', 'deprioritized'];
+
 export type CircuitBreakerState = 'CLOSED' | 'HALF_OPEN' | 'OPEN';
 
 /** User preferences for decision filtering in plan review */
@@ -85,6 +94,10 @@ export interface Session {
   queuedAt?: string | null;
   /** User preferences for decision filtering */
   preferences?: UserPreferences;
+  /** Reason why the session was backed out (only set when status is 'paused' or 'failed' due to backout) */
+  backoutReason?: BackoutReason | null;
+  /** Timestamp when the session was backed out (ISO string) */
+  backoutTimestamp?: string | null;
 }
 
 export interface SessionRuntimeStatus {

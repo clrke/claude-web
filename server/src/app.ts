@@ -39,6 +39,8 @@ import {
   RequestChangesInputSchema,
   UserPreferencesSchema,
   QueueReorderInputSchema,
+  BackoutSessionInputSchema,
+  isBackoutAllowedForStatus,
 } from './validation/schemas';
 import {
   isPlanApproved,
@@ -3604,6 +3606,127 @@ Please ensure you output proper completion markers when done.`;
 
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to request re-review';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Back out from a session (pause or abandon)
+  app.post('/api/sessions/:projectId/:featureId/backout', validate(BackoutSessionInputSchema), async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+      const { action, reason } = req.body;
+
+      // Get session to verify it exists and check status
+      const session = await sessionManager.getSession(projectId, featureId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      // Validate that backout is allowed for current status
+      if (!isBackoutAllowedForStatus(session.status)) {
+        return res.status(400).json({
+          error: `Cannot back out from session with status '${session.status}'. Backout is only allowed for active sessions (stages 1-6 or queued).`
+        });
+      }
+
+      const previousStage = session.currentStage;
+
+      // Perform the backout
+      const result = await sessionManager.backoutSession(projectId, featureId, action, reason);
+
+      // Broadcast backout event
+      if (eventBroadcaster) {
+        eventBroadcaster.sessionBackedOut(
+          projectId,
+          featureId,
+          session.id,
+          action,
+          result.session.backoutReason || 'user_requested',
+          result.session.status,
+          previousStage,
+          result.promotedSession?.featureId || null
+        );
+
+        // If a session was promoted, broadcast its stage change
+        if (result.promotedSession) {
+          eventBroadcaster.stageChanged(result.promotedSession, 0);
+          eventBroadcaster.executionStatus(
+            result.promotedSession.projectId,
+            result.promotedSession.featureId,
+            'idle',
+            'session_promoted_from_queue',
+            { stage: result.promotedSession.currentStage }
+          );
+        }
+      }
+
+      console.log(`Session ${featureId} backed out with action: ${action}, reason: ${result.session.backoutReason}`);
+
+      res.json({
+        session: result.session,
+        promotedSession: result.promotedSession,
+      });
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to back out from session';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Resume a paused session
+  app.post('/api/sessions/:projectId/:featureId/resume', async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+
+      // Get session to verify it exists
+      const session = await sessionManager.getSession(projectId, featureId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      // Validate that session is paused
+      if (session.status !== 'paused') {
+        return res.status(400).json({
+          error: `Cannot resume session with status '${session.status}'. Only paused sessions can be resumed.`
+        });
+      }
+
+      // Perform the resume
+      const result = await sessionManager.resumeSession(projectId, featureId);
+
+      // Broadcast resume event
+      if (eventBroadcaster) {
+        eventBroadcaster.sessionResumed(
+          projectId,
+          featureId,
+          session.id,
+          result.session.status,
+          result.session.currentStage,
+          result.wasQueued,
+          result.session.queuePosition ?? null
+        );
+
+        // If not queued, the session is now active
+        if (!result.wasQueued) {
+          eventBroadcaster.executionStatus(
+            projectId,
+            featureId,
+            'idle',
+            'session_resumed',
+            { stage: result.session.currentStage }
+          );
+        }
+      }
+
+      console.log(`Session ${featureId} resumed, wasQueued: ${result.wasQueued}`);
+
+      res.json({
+        session: result.session,
+        wasQueued: result.wasQueued,
+      });
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to resume session';
       res.status(500).json({ error: message });
     }
   });
