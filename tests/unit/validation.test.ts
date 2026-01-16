@@ -173,6 +173,95 @@ describe('Validation Schemas', () => {
       });
       expect(result.success).toBe(false);
     });
+
+    describe('queuePosition', () => {
+      it('should accept valid positive integer queuePosition', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: 1,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.queuePosition).toBe(1);
+        }
+      });
+
+      it('should accept queuePosition of 1 (minimum)', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: 1,
+        });
+        expect(result.success).toBe(true);
+      });
+
+      it('should accept large positive queuePosition', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: 100,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.queuePosition).toBe(100);
+        }
+      });
+
+      it('should accept null queuePosition (clears queue position)', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: null,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.queuePosition).toBeNull();
+        }
+      });
+
+      it('should accept undefined queuePosition (field not included)', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          status: 'planning',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.queuePosition).toBeUndefined();
+        }
+      });
+
+      it('should reject queuePosition of 0', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: 0,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject negative queuePosition', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: -1,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject non-integer queuePosition', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: 1.5,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject string queuePosition', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          queuePosition: '1',
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should accept queuePosition with other valid fields', () => {
+        const result = UpdateSessionInputSchema.safeParse({
+          status: 'paused',
+          queuePosition: 5,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.status).toBe('paused');
+          expect(result.data.queuePosition).toBe(5);
+        }
+      });
+    });
   });
 
   describe('StageTransitionInputSchema', () => {

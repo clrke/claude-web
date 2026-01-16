@@ -85,6 +85,7 @@ export const UpdateSessionInputSchema = z.object({
   technicalNotes: z.string().max(5000).optional(),
   claudeSessionId: z.string().nullable().optional(),
   claudePlanFilePath: z.string().nullable().optional(),
+  queuePosition: z.number().int().min(1).nullable().optional(),
 }).strict();
 
 // Stage transition input schema
