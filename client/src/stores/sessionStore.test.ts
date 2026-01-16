@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { useSessionStore, usePlanStep, useQuestion, type ExecutionStatus } from './sessionStore';
-import type { Plan, PlanStep, Question } from '@claude-code-web/shared';
+import type { Plan, PlanStep, Question, Session } from '@claude-code-web/shared';
 
 describe('sessionStore selector hooks', () => {
   // Reset store state before each test
@@ -11,13 +11,17 @@ describe('sessionStore selector hooks', () => {
       plan: null,
       questions: [],
       conversations: [],
+      queuedSessions: [],
+      isReorderingQueue: false,
       executionStatus: null,
       liveOutput: '',
       isOutputComplete: true,
       implementationProgress: null,
+      isAwaitingClaudeResponse: false,
       isLoading: false,
       error: null,
     });
+    vi.restoreAllMocks();
   });
 
   describe('usePlanStep', () => {
@@ -349,6 +353,275 @@ describe('sessionStore selector hooks', () => {
       });
 
       expect(useSessionStore.getState().executionStatus).toBeNull();
+    });
+  });
+
+  describe('Queue Management', () => {
+    const createMockSession = (featureId: string, queuePosition: number | null): Session => ({
+      id: `session-${featureId}`,
+      version: '1.0',
+      projectId: 'test-project',
+      featureId,
+      title: `Feature ${featureId}`,
+      featureDescription: 'Test description',
+      projectPath: '/test/path',
+      acceptanceCriteria: [],
+      affectedFiles: [],
+      technicalNotes: '',
+      baseBranch: 'main',
+      featureBranch: `feature/${featureId}`,
+      baseCommitSha: 'abc123',
+      status: 'queued',
+      currentStage: 0,
+      queuePosition,
+      queuedAt: '2024-01-01T00:00:00Z',
+      replanningCount: 0,
+      claudeSessionId: null,
+      claudeStage3SessionId: null,
+      claudePlanFilePath: null,
+      currentPlanVersion: 0,
+      prUrl: null,
+      sessionExpiresAt: '2024-01-02T00:00:00Z',
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+    });
+
+    describe('setQueuedSessions', () => {
+      it('sets queued sessions', () => {
+        const sessions = [
+          createMockSession('feature-1', 1),
+          createMockSession('feature-2', 2),
+        ];
+
+        act(() => {
+          useSessionStore.getState().setQueuedSessions(sessions);
+        });
+
+        expect(useSessionStore.getState().queuedSessions).toHaveLength(2);
+        expect(useSessionStore.getState().queuedSessions[0].featureId).toBe('feature-1');
+      });
+    });
+
+    describe('updateQueuedSessionsFromEvent', () => {
+      it('updates queue positions from Socket.IO event', () => {
+        const sessions = [
+          createMockSession('feature-1', 1),
+          createMockSession('feature-2', 2),
+          createMockSession('feature-3', 3),
+        ];
+
+        act(() => {
+          useSessionStore.getState().setQueuedSessions(sessions);
+        });
+
+        // Simulate reorder event: feature-3 moved to front
+        act(() => {
+          useSessionStore.getState().updateQueuedSessionsFromEvent([
+            { featureId: 'feature-3', title: 'Feature 3', queuePosition: 1 },
+            { featureId: 'feature-1', title: 'Feature 1', queuePosition: 2 },
+            { featureId: 'feature-2', title: 'Feature 2', queuePosition: 3 },
+          ]);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].featureId).toBe('feature-3');
+        expect(state.queuedSessions[0].queuePosition).toBe(1);
+        expect(state.queuedSessions[1].featureId).toBe('feature-1');
+        expect(state.queuedSessions[1].queuePosition).toBe(2);
+        expect(state.queuedSessions[2].featureId).toBe('feature-2');
+        expect(state.queuedSessions[2].queuePosition).toBe(3);
+      });
+    });
+
+    describe('reorderQueue', () => {
+      it('applies optimistic update before API call', async () => {
+        const sessions = [
+          createMockSession('feature-1', 1),
+          createMockSession('feature-2', 2),
+          createMockSession('feature-3', 3),
+        ];
+
+        act(() => {
+          useSessionStore.getState().setQueuedSessions(sessions);
+        });
+
+        // Mock fetch to delay response
+        const fetchMock = vi.fn().mockImplementation(() =>
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve({
+                ok: true,
+                json: () => Promise.resolve([
+                  { ...sessions[2], queuePosition: 1 },
+                  { ...sessions[0], queuePosition: 2 },
+                  { ...sessions[1], queuePosition: 3 },
+                ]),
+              });
+            }, 100);
+          })
+        );
+        global.fetch = fetchMock;
+
+        // Start reordering
+        const reorderPromise = act(async () => {
+          return useSessionStore.getState().reorderQueue('test-project', ['feature-3', 'feature-1', 'feature-2']);
+        });
+
+        // Check optimistic update was applied immediately
+        expect(useSessionStore.getState().isReorderingQueue).toBe(true);
+        expect(useSessionStore.getState().queuedSessions[0].featureId).toBe('feature-3');
+        expect(useSessionStore.getState().queuedSessions[0].queuePosition).toBe(1);
+
+        await reorderPromise;
+
+        expect(useSessionStore.getState().isReorderingQueue).toBe(false);
+      });
+
+      it('calls API with correct parameters', async () => {
+        const sessions = [
+          createMockSession('feature-1', 1),
+          createMockSession('feature-2', 2),
+        ];
+
+        act(() => {
+          useSessionStore.getState().setQueuedSessions(sessions);
+        });
+
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve([
+            { ...sessions[1], queuePosition: 1 },
+            { ...sessions[0], queuePosition: 2 },
+          ]),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().reorderQueue('test-project', ['feature-2', 'feature-1']);
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/sessions/test-project/queue-order',
+          expect.objectContaining({
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderedFeatureIds: ['feature-2', 'feature-1'] }),
+          })
+        );
+      });
+
+      it('updates state with server response', async () => {
+        const sessions = [
+          createMockSession('feature-1', 1),
+          createMockSession('feature-2', 2),
+        ];
+
+        act(() => {
+          useSessionStore.getState().setQueuedSessions(sessions);
+        });
+
+        const serverResponse = [
+          { ...sessions[1], queuePosition: 1, updatedAt: '2024-01-01T01:00:00Z' },
+          { ...sessions[0], queuePosition: 2, updatedAt: '2024-01-01T01:00:00Z' },
+        ];
+
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(serverResponse),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().reorderQueue('test-project', ['feature-2', 'feature-1']);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions).toEqual(serverResponse);
+        expect(state.isReorderingQueue).toBe(false);
+      });
+
+      it('rolls back on API error', async () => {
+        const sessions = [
+          createMockSession('feature-1', 1),
+          createMockSession('feature-2', 2),
+        ];
+
+        act(() => {
+          useSessionStore.getState().setQueuedSessions(sessions);
+        });
+
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: false,
+          json: () => Promise.resolve({ error: 'Invalid feature IDs' }),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          try {
+            await useSessionStore.getState().reorderQueue('test-project', ['feature-2', 'feature-1']);
+          } catch {
+            // Expected to throw
+          }
+        });
+
+        // Should rollback to original order
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].featureId).toBe('feature-1');
+        expect(state.queuedSessions[1].featureId).toBe('feature-2');
+        expect(state.isReorderingQueue).toBe(false);
+        expect(state.error).toBe('Invalid feature IDs');
+      });
+
+      it('handles partial reordering', async () => {
+        const sessions = [
+          createMockSession('feature-1', 1),
+          createMockSession('feature-2', 2),
+          createMockSession('feature-3', 3),
+        ];
+
+        act(() => {
+          useSessionStore.getState().setQueuedSessions(sessions);
+        });
+
+        // Only reorder feature-3 to front
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve([
+            { ...sessions[2], queuePosition: 1 },
+            { ...sessions[0], queuePosition: 2 },
+            { ...sessions[1], queuePosition: 3 },
+          ]),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().reorderQueue('test-project', ['feature-3']);
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions[0].featureId).toBe('feature-3');
+        expect(state.queuedSessions[1].featureId).toBe('feature-1');
+        expect(state.queuedSessions[2].featureId).toBe('feature-2');
+      });
+
+      it('reset clears queued sessions', () => {
+        const sessions = [
+          createMockSession('feature-1', 1),
+          createMockSession('feature-2', 2),
+        ];
+
+        act(() => {
+          useSessionStore.getState().setQueuedSessions(sessions);
+        });
+
+        expect(useSessionStore.getState().queuedSessions).toHaveLength(2);
+
+        act(() => {
+          useSessionStore.getState().reset();
+        });
+
+        expect(useSessionStore.getState().queuedSessions).toHaveLength(0);
+      });
     });
   });
 });
