@@ -1,6 +1,7 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import path from 'path';
 import crypto from 'crypto';
+import { computeStepHash, isStepContentUnchanged } from './utils/stepContentHash';
 import { readFile } from 'fs/promises';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
@@ -718,22 +719,12 @@ async function _spawnStage3Implementation(
 }
 
 /**
- * Compute a hash of step content (title + description) for change detection.
- * Used to skip re-implementation of steps that haven't changed.
- */
-function computeStepContentHash(step: PlanStep): string {
-  const content = `${step.title}|${step.description || ''}`;
-  return crypto.createHash('md5').update(content).digest('hex').substring(0, 12);
-}
-
-/**
  * Check if a step's content has changed since it was last completed.
  * Returns true if the step should be skipped (content unchanged).
+ * Uses the utility function from stepContentHash.ts for deterministic hashing.
  */
 function shouldSkipUnchangedStep(step: PlanStep): boolean {
-  if (!step.contentHash) return false;  // No hash = never completed, don't skip
-  const currentHash = computeStepContentHash(step);
-  return step.contentHash === currentHash;
+  return isStepContentUnchanged(step);
 }
 
 /**
