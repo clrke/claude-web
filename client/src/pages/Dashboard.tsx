@@ -133,10 +133,10 @@ export default function Dashboard() {
     };
   }, [sessions, filter]);
 
-  // Get the projectId for reordering (from active session or first queued session)
+  // Get the projectId for reordering (prioritize queued sessions since they're what we reorder)
   const projectId = useMemo(() => {
-    if (activeSession) return activeSession.projectId;
     if (queuedSessions.length > 0) return queuedSessions[0].projectId;
+    if (activeSession) return activeSession.projectId;
     return null;
   }, [activeSession, queuedSessions]);
 

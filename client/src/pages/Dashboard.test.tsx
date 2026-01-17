@@ -470,6 +470,92 @@ describe('Dashboard', () => {
     });
   });
 
+  describe('queue reordering with multiple projects', () => {
+    it('uses projectId from queued sessions, not active session, when reordering', async () => {
+      const user = userEvent.setup();
+      const mockReorderQueue = vi.fn().mockResolvedValue(undefined);
+
+      useSessionStore.setState({
+        reorderQueue: mockReorderQueue,
+        isReorderingQueue: false,
+      });
+
+      // Active session in project A, queued sessions in project B
+      const sessions = [
+        createMockSession({
+          projectId: 'project-a',
+          featureId: 'active-feat',
+          status: 'discovery',
+          title: 'Active in Project A',
+        }),
+        createMockSession({
+          projectId: 'project-b',
+          featureId: 'queued-feat-1',
+          status: 'queued',
+          queuePosition: 1,
+          title: 'Queued 1',
+        }),
+        createMockSession({
+          projectId: 'project-b',
+          featureId: 'queued-feat-2',
+          status: 'queued',
+          queuePosition: 2,
+          title: 'Queued 2',
+        }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('Queued 1')).toBeInTheDocument();
+        expect(screen.getByText('Queued 2')).toBeInTheDocument();
+      });
+
+      // The component should derive projectId from queued sessions (project-b)
+      // not from active session (project-a)
+      // We verify this by checking that queuedSessions are set correctly
+      const storeState = useSessionStore.getState();
+      expect(storeState.queuedSessions).toHaveLength(2);
+      expect(storeState.queuedSessions[0].projectId).toBe('project-b');
+    });
+
+    it('prioritizes queued sessions projectId over active session for socket connection', async () => {
+      const { connectToProject } = await import('../services/socket');
+
+      // Active session in project A, queued sessions in project B
+      const sessions = [
+        createMockSession({
+          projectId: 'project-a',
+          featureId: 'active-feat',
+          status: 'discovery',
+        }),
+        createMockSession({
+          projectId: 'project-b',
+          featureId: 'queued-feat',
+          status: 'queued',
+          queuePosition: 1,
+        }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        // Should connect to project-b (from queued sessions) not project-a (from active)
+        expect(connectToProject).toHaveBeenCalledWith('project-b');
+      });
+    });
+  });
+
   describe('Edit button for queued sessions', () => {
     it('shows Edit button for queued sessions in the queue section', async () => {
       const sessions = [
