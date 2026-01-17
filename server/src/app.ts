@@ -25,6 +25,7 @@ import {
   buildStage5Prompt,
   buildStage5PromptLean,
   buildPlanRevisionPrompt,
+  buildPlanRevisionPromptLean,
   buildBatchAnswersContinuationPrompt,
   buildSingleStepPrompt,
   buildSingleStepPromptLean,
@@ -1409,7 +1410,11 @@ async function executeStage3Steps(
         );
 
         // Spawn Stage 2 review with context about the failed step
-        const failedStepContext = `The following step could not be completed and needs review:\n\nStep ${nextStep.id}: ${nextStep.title}\n\nReason: The step did not complete successfully and no specific blocker was identified. Please review the plan and either:\n1. Provide more detailed instructions for this step\n2. Break it into smaller steps\n3. Identify any missing prerequisites`;
+        // Use lean prompt if we have Claude context from Stage 3
+        const failedStepReason = `Step ${nextStep.id} (${nextStep.title}) did not complete. Review the plan: provide more detailed instructions, break into smaller steps, or identify missing prerequisites.`;
+        const failedStepPrompt = updatedSession.claudeSessionId
+          ? buildPlanRevisionPromptLean(failedStepReason, updatedSession.claudePlanFilePath, { failedStepId: nextStep.id })
+          : `The following step could not be completed and needs review:\n\nStep ${nextStep.id}: ${nextStep.title}\n\nReason: The step did not complete successfully and no specific blocker was identified. Please review the plan and either:\n1. Provide more detailed instructions for this step\n2. Break it into smaller steps\n3. Identify any missing prerequisites`;
 
         spawnStage2Review(
           updatedSession,
@@ -1417,7 +1422,7 @@ async function executeStage3Steps(
           sessionManager,
           resultHandler,
           eventBroadcaster,
-          failedStepContext
+          failedStepPrompt
         );
       } else {
         console.warn(`Step [${nextStep.id}] did not complete, stopping execution`);
@@ -2004,7 +2009,10 @@ async function handleStage5Result(
       }
       revisionFeedback += '\n\nPlease review the updated plan. Ask clarifying questions if needed, then approve the plan.';
 
-      const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback);
+      // Use lean prompt if we have Claude context from Stage 5
+      const revisionPrompt = updatedSession.claudeSessionId
+        ? buildPlanRevisionPromptLean(revisionFeedback, updatedSession.claudePlanFilePath)
+        : buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback);
       await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, revisionPrompt);
 
       return;
@@ -2031,12 +2039,17 @@ async function handleStage5Result(
       plan.planVersion = (plan.planVersion || 1) + 1;
       await storage.writeJson(`${sessionDir}/plan.json`, plan);
 
-      // Auto-spawn Stage 2 - Claude will read CI details directly via gh pr commands
-      const revisionFeedback = `CI checks failed. Use \`gh pr checks\` and \`gh run view\` to investigate the failures and determine what needs to be fixed.`;
-      const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback, {
-        isCIFailure: true,
-        prUrl: updatedSession.prUrl,
-      });
+      // Auto-spawn Stage 2 - use lean prompt since we have Claude context from Stage 5
+      const revisionFeedback = 'CI checks failed. Investigate failures and determine what needs to be fixed.';
+      const revisionPrompt = updatedSession.claudeSessionId
+        ? buildPlanRevisionPromptLean(revisionFeedback, updatedSession.claudePlanFilePath, {
+            isCIFailure: true,
+            prUrl: updatedSession.prUrl,
+          })
+        : buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback, {
+            isCIFailure: true,
+            prUrl: updatedSession.prUrl,
+          });
       await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, revisionPrompt);
     }
 
@@ -2855,8 +2868,10 @@ export function createApp(
         eventBroadcaster?.stageChanged(updatedSession, previousStage);
 
         // Build Stage 2 prompt with user's feedback
-        const _currentIteration = (plan.reviewCount || 0) + 1; // Track iteration for future use
-        const prompt = buildPlanRevisionPrompt(updatedSession, plan, feedback);
+        // Use lean prompt if we have Claude context from previous stages
+        const prompt = updatedSession.claudeSessionId
+          ? buildPlanRevisionPromptLean(feedback, updatedSession.claudePlanFilePath)
+          : buildPlanRevisionPrompt(updatedSession, plan, feedback);
         await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
 
         console.log(`Session ${featureId} returned to Stage 2 for plan changes (modification session with ${completedStepCount} completed steps)`);

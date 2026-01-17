@@ -1337,6 +1337,44 @@ Summary:
 // ============================================================================
 
 /**
+ * Lean plan revision prompt for when returning from Stage 3+ with --resume.
+ * Claude already knows all the context from previous stages.
+ *
+ * @param feedback - The reason for returning to Stage 2 (e.g., step failure, CI failure)
+ * @param claudePlanFilePath - Optional path to the plan.md file
+ * @param options - Additional context options
+ */
+export function buildPlanRevisionPromptLean(
+  feedback: string,
+  claudePlanFilePath?: string | null,
+  options?: {
+    isCIFailure?: boolean;
+    prUrl?: string | null;
+    failedStepId?: string;
+  }
+): string {
+  const planFile = claudePlanFilePath
+    ? `Plan file: ${claudePlanFilePath}\n\n`
+    : '';
+
+  const ciContext = options?.isCIFailure && options?.prUrl
+    ? `Use \`gh pr checks ${options.prUrl}\` and \`gh run view\` to investigate.\n\n`
+    : '';
+
+  const stepContext = options?.failedStepId
+    ? `Failed step: ${options.failedStepId}\n\n`
+    : '';
+
+  return `${planFile}${stepContext}${ciContext}**Returning to plan review:** ${feedback}
+
+Review and revise the plan as needed:
+1. Use the Edit tool to modify plan.md directly
+2. Update plan.json to match
+3. Ask [DECISION_NEEDED] questions if clarification is needed
+4. Output [PLAN_APPROVED] when the plan is ready for implementation`;
+}
+
+/**
  * Lean Stage 2 prompt for iterations 2+.
  * Claude already knows the plan structure and marker formats from Stage 1.
  */
