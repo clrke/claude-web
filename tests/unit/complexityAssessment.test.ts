@@ -1,4 +1,4 @@
-import type { AcceptanceCriterion } from '@claude-code-web/shared';
+import type { AcceptanceCriterion, Session, ComplexityAssessedEvent } from '@claude-code-web/shared';
 import {
   ChangeComplexity,
   CHANGE_COMPLEXITY_LEVELS,
@@ -289,5 +289,165 @@ describe('buildComplexityAssessmentPrompt', () => {
 
       expect(prompt).toContain('Line 1\nLine 2\nLine 3');
     });
+  });
+});
+
+describe('Session complexity fields', () => {
+  const createBaseSession = (): Omit<Session, 'assessedComplexity' | 'complexityReason' | 'suggestedAgents' | 'complexityAssessedAt'> => ({
+    version: '1.0',
+    dataVersion: 1,
+    id: 'session-123',
+    projectId: 'project-abc',
+    featureId: 'add-auth',
+    title: 'Add Authentication',
+    featureDescription: 'Add JWT auth',
+    projectPath: '/test/project',
+    acceptanceCriteria: [],
+    affectedFiles: [],
+    technicalNotes: '',
+    baseBranch: 'main',
+    featureBranch: 'feature/add-auth',
+    baseCommitSha: 'abc123',
+    status: 'queued',
+    currentStage: 0,
+    replanningCount: 0,
+    claudeSessionId: null,
+    claudePlanFilePath: null,
+    currentPlanVersion: 0,
+    claudeStage3SessionId: null,
+    prUrl: null,
+    sessionExpiresAt: '2026-01-12T00:00:00Z',
+    createdAt: '2026-01-11T00:00:00Z',
+    updatedAt: '2026-01-11T00:00:00Z',
+  });
+
+  it('should allow Session without complexity fields (backward compatible)', () => {
+    const session: Session = createBaseSession();
+
+    expect(session.assessedComplexity).toBeUndefined();
+    expect(session.complexityReason).toBeUndefined();
+    expect(session.suggestedAgents).toBeUndefined();
+    expect(session.complexityAssessedAt).toBeUndefined();
+  });
+
+  it('should allow Session with all complexity fields populated', () => {
+    const session: Session = {
+      ...createBaseSession(),
+      assessedComplexity: 'simple',
+      complexityReason: 'Frontend label change only',
+      suggestedAgents: ['frontend'],
+      complexityAssessedAt: '2026-01-11T00:30:00Z',
+    };
+
+    expect(session.assessedComplexity).toBe('simple');
+    expect(session.complexityReason).toBe('Frontend label change only');
+    expect(session.suggestedAgents).toEqual(['frontend']);
+    expect(session.complexityAssessedAt).toBe('2026-01-11T00:30:00Z');
+  });
+
+  it('should allow Session with partial complexity fields', () => {
+    const session: Session = {
+      ...createBaseSession(),
+      assessedComplexity: 'normal',
+      // Other fields left undefined
+    };
+
+    expect(session.assessedComplexity).toBe('normal');
+    expect(session.complexityReason).toBeUndefined();
+  });
+
+  it('should allow all ChangeComplexity values in Session', () => {
+    for (const complexity of CHANGE_COMPLEXITY_LEVELS) {
+      const session: Session = {
+        ...createBaseSession(),
+        assessedComplexity: complexity,
+      };
+      expect(session.assessedComplexity).toBe(complexity);
+    }
+  });
+
+  it('should allow multiple agents in suggestedAgents', () => {
+    const session: Session = {
+      ...createBaseSession(),
+      assessedComplexity: 'complex',
+      suggestedAgents: ['frontend', 'backend', 'database', 'testing', 'infrastructure', 'documentation'],
+    };
+
+    expect(session.suggestedAgents).toHaveLength(6);
+  });
+});
+
+describe('ComplexityAssessedEvent', () => {
+  it('should allow creating a valid ComplexityAssessedEvent', () => {
+    const event: ComplexityAssessedEvent = {
+      projectId: 'project-abc',
+      featureId: 'add-auth',
+      sessionId: 'session-123',
+      complexity: 'simple',
+      reason: 'Frontend label change only',
+      suggestedAgents: ['frontend'],
+      useLeanPrompts: true,
+      durationMs: 1500,
+      timestamp: '2026-01-11T00:30:00Z',
+    };
+
+    expect(event.projectId).toBe('project-abc');
+    expect(event.featureId).toBe('add-auth');
+    expect(event.sessionId).toBe('session-123');
+    expect(event.complexity).toBe('simple');
+    expect(event.reason).toBe('Frontend label change only');
+    expect(event.suggestedAgents).toEqual(['frontend']);
+    expect(event.useLeanPrompts).toBe(true);
+    expect(event.durationMs).toBe(1500);
+    expect(event.timestamp).toBe('2026-01-11T00:30:00Z');
+  });
+
+  it('should allow all complexity levels', () => {
+    for (const complexity of CHANGE_COMPLEXITY_LEVELS) {
+      const event: ComplexityAssessedEvent = {
+        projectId: 'project-abc',
+        featureId: 'feature-123',
+        sessionId: 'session-123',
+        complexity,
+        reason: `Complexity is ${complexity}`,
+        suggestedAgents: [],
+        useLeanPrompts: complexity === 'trivial' || complexity === 'simple',
+        durationMs: 1000,
+        timestamp: new Date().toISOString(),
+      };
+      expect(event.complexity).toBe(complexity);
+    }
+  });
+
+  it('should allow empty suggestedAgents array', () => {
+    const event: ComplexityAssessedEvent = {
+      projectId: 'project-abc',
+      featureId: 'feature-123',
+      sessionId: 'session-123',
+      complexity: 'normal',
+      reason: 'Normal change',
+      suggestedAgents: [],
+      useLeanPrompts: false,
+      durationMs: 2000,
+      timestamp: new Date().toISOString(),
+    };
+
+    expect(event.suggestedAgents).toEqual([]);
+  });
+
+  it('should allow all six agent types', () => {
+    const event: ComplexityAssessedEvent = {
+      projectId: 'project-abc',
+      featureId: 'feature-123',
+      sessionId: 'session-123',
+      complexity: 'complex',
+      reason: 'Complex change requiring all agents',
+      suggestedAgents: ['frontend', 'backend', 'database', 'testing', 'infrastructure', 'documentation'],
+      useLeanPrompts: false,
+      durationMs: 3000,
+      timestamp: new Date().toISOString(),
+    };
+
+    expect(event.suggestedAgents).toHaveLength(6);
   });
 });

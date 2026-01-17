@@ -136,6 +136,16 @@ export interface Session {
   removedStepIds?: string[];
   /** Flag indicating this Stage 2 session is for plan modification (not initial planning) */
   isPlanModificationSession?: boolean;
+
+  // Complexity assessment fields (populated before queueing)
+  /** Assessed complexity level for this feature request */
+  assessedComplexity?: ChangeComplexity;
+  /** Explanation of why this complexity was assigned */
+  complexityReason?: string;
+  /** Suggested agent types based on complexity (e.g., ['frontend'], ['backend', 'database']) */
+  suggestedAgents?: string[];
+  /** Timestamp when complexity was assessed (ISO string) */
+  complexityAssessedAt?: string;
 }
 
 export interface SessionRuntimeStatus {
