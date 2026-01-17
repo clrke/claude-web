@@ -6,14 +6,31 @@ import Dashboard from './Dashboard';
 import { useSessionStore } from '../stores/sessionStore';
 import type { Session } from '@claude-code-web/shared';
 
-// Mock socket service
+// Mock socket service with event handlers
+const mockSocketHandlers: Record<string, ((...args: unknown[]) => void)[]> = {};
+const mockSocket = {
+  on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+    if (!mockSocketHandlers[event]) {
+      mockSocketHandlers[event] = [];
+    }
+    mockSocketHandlers[event].push(handler);
+  }),
+  off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+    if (mockSocketHandlers[event]) {
+      mockSocketHandlers[event] = mockSocketHandlers[event].filter((h) => h !== handler);
+    }
+  }),
+  emit: (event: string, ...args: unknown[]) => {
+    if (mockSocketHandlers[event]) {
+      mockSocketHandlers[event].forEach((handler) => handler(...args));
+    }
+  },
+};
+
 vi.mock('../services/socket', () => ({
   connectToProject: vi.fn(),
   disconnectFromProject: vi.fn(),
-  getSocket: vi.fn(() => ({
-    on: vi.fn(),
-    off: vi.fn(),
-  })),
+  getSocket: vi.fn(() => mockSocket),
 }));
 
 // Mock fetch globally
@@ -60,6 +77,8 @@ const renderDashboard = () => {
 describe('Dashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Clear socket handlers
+    Object.keys(mockSocketHandlers).forEach((key) => delete mockSocketHandlers[key]);
     useSessionStore.setState({
       queuedSessions: [],
       isReorderingQueue: false,
@@ -677,6 +696,126 @@ describe('Dashboard', () => {
 
       await waitFor(() => {
         expect(screen.getByTestId('edit-page')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('session.backedout socket event', () => {
+    it('removes backed-out session from queued sessions when event is received', async () => {
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'Queued 1' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-2', status: 'queued', queuePosition: 2, title: 'Queued 2' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-3', status: 'queued', queuePosition: 3, title: 'Queued 3' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('Queued 1')).toBeInTheDocument();
+        expect(screen.getByText('Queued 2')).toBeInTheDocument();
+        expect(screen.getByText('Queued 3')).toBeInTheDocument();
+      });
+
+      // Simulate session.backedout event from another client
+      mockSocket.emit('session.backedout', {
+        projectId: 'proj1',
+        featureId: 'queued-2',
+        sessionId: 'session-queued-2',
+        action: 'abandon',
+        reason: 'user_requested',
+        newStatus: 'failed',
+        previousStage: 0,
+        nextSessionId: null,
+        timestamp: new Date().toISOString(),
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText('Queued 2')).not.toBeInTheDocument();
+      });
+
+      // Other sessions should still be present
+      expect(screen.getByText('Queued 1')).toBeInTheDocument();
+      expect(screen.getByText('Queued 3')).toBeInTheDocument();
+    });
+
+    it('ignores session.backedout events from other projects', async () => {
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'Queued 1' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-2', status: 'queued', queuePosition: 2, title: 'Queued 2' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('Queued 1')).toBeInTheDocument();
+        expect(screen.getByText('Queued 2')).toBeInTheDocument();
+      });
+
+      // Simulate session.backedout event from a different project
+      mockSocket.emit('session.backedout', {
+        projectId: 'other-project',
+        featureId: 'queued-2',
+        sessionId: 'session-queued-2',
+        action: 'abandon',
+        reason: 'user_requested',
+        newStatus: 'failed',
+        previousStage: 0,
+        nextSessionId: null,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Both sessions should still be present since the event was for a different project
+      await waitFor(() => {
+        expect(screen.getByText('Queued 1')).toBeInTheDocument();
+        expect(screen.getByText('Queued 2')).toBeInTheDocument();
+      });
+    });
+
+    it('updates store queuedSessions when session.backedout event is received', async () => {
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1 }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-2', status: 'queued', queuePosition: 2 }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        const storeState = useSessionStore.getState();
+        expect(storeState.queuedSessions).toHaveLength(2);
+      });
+
+      // Simulate session.backedout event
+      mockSocket.emit('session.backedout', {
+        projectId: 'proj1',
+        featureId: 'queued-1',
+        sessionId: 'session-queued-1',
+        action: 'abandon',
+        reason: 'user_requested',
+        newStatus: 'failed',
+        previousStage: 0,
+        nextSessionId: null,
+        timestamp: new Date().toISOString(),
+      });
+
+      await waitFor(() => {
+        const storeState = useSessionStore.getState();
+        expect(storeState.queuedSessions).toHaveLength(1);
+        expect(storeState.queuedSessions[0].featureId).toBe('queued-2');
       });
     });
   });

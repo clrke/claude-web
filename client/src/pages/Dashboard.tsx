@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { Session, QueueReorderedEvent, ComplexityAssessedEvent } from '@claude-code-web/shared';
+import type { Session, QueueReorderedEvent, ComplexityAssessedEvent, SessionBackedOutEvent } from '@claude-code-web/shared';
 import { useSessionStore } from '../stores/sessionStore';
 import QueuedSessionsList, { ChangeComplexityBadge } from '../components/QueuedSessionsList';
 import CancelQueuedSessionModal from '../components/CancelQueuedSessionModal';
@@ -190,12 +190,28 @@ export default function Dashboard() {
       }
     };
 
+    // Listen for session backout events (from other clients cancelling queued sessions)
+    const handleSessionBackedOut = (event: SessionBackedOutEvent) => {
+      if (event.projectId === projectId) {
+        // Remove the backed-out session from queuedSessions
+        const { queuedSessions: currentSessions } = useSessionStore.getState();
+        const filteredSessions = currentSessions.filter(
+          (session) => session.featureId !== event.featureId
+        );
+        setQueuedSessions(filteredSessions);
+        // Also update local sessions state
+        setSessions((prev) => prev.filter((s) => s.featureId !== event.featureId));
+      }
+    };
+
     socket.on('queue.reordered', handleQueueReordered);
     socket.on('complexity.assessed', handleComplexityAssessed);
+    socket.on('session.backedout', handleSessionBackedOut);
 
     return () => {
       socket.off('queue.reordered', handleQueueReordered);
       socket.off('complexity.assessed', handleComplexityAssessed);
+      socket.off('session.backedout', handleSessionBackedOut);
       if (connectedProjectRef.current) {
         disconnectFromProject(connectedProjectRef.current);
         connectedProjectRef.current = null;
