@@ -905,4 +905,116 @@ describe('ComplexityAssessor', () => {
       jest.useRealTimers();
     });
   });
+
+  describe('error fallback behavior summary (step-20)', () => {
+    /**
+     * This test documents all error scenarios that result in fallback to
+     * 'normal' complexity with conservative defaults. This ensures the system
+     * never fails silently and always provides a safe fallback.
+     */
+
+    it('should fallback to normal complexity with 4 agents and useLeanPrompts=false on all error paths', async () => {
+      // Define expected fallback behavior
+      const expectedFallback = {
+        complexity: 'normal',
+        agentCount: 4,
+        useLeanPrompts: false,
+      };
+
+      // Test 1: Timeout
+      jest.useFakeTimers();
+      let resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+      jest.advanceTimersByTime(120_001);
+      let result = await resultPromise;
+
+      expect(result.complexity).toBe(expectedFallback.complexity);
+      expect(result.suggestedAgents).toHaveLength(expectedFallback.agentCount);
+      expect(result.useLeanPrompts).toBe(expectedFallback.useLeanPrompts);
+      expect(result.reason).toContain('timed out');
+
+      jest.useRealTimers();
+
+      // Reset mock
+      mockChildProcess = new EventEmitter();
+      mockChildProcess.stdout = new EventEmitter() as any;
+      mockChildProcess.stderr = new EventEmitter() as any;
+      mockChildProcess.kill = jest.fn();
+      mockSpawn.mockReturnValue(mockChildProcess as ChildProcess);
+
+      // Test 2: Non-zero exit code
+      resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+      mockChildProcess.emit('close', 1);
+      result = await resultPromise;
+
+      expect(result.complexity).toBe(expectedFallback.complexity);
+      expect(result.suggestedAgents).toHaveLength(expectedFallback.agentCount);
+      expect(result.useLeanPrompts).toBe(expectedFallback.useLeanPrompts);
+      expect(result.reason).toContain('failed');
+
+      // Reset mock
+      mockChildProcess = new EventEmitter();
+      mockChildProcess.stdout = new EventEmitter() as any;
+      mockChildProcess.stderr = new EventEmitter() as any;
+      mockChildProcess.kill = jest.fn();
+      mockSpawn.mockReturnValue(mockChildProcess as ChildProcess);
+
+      // Test 3: Spawn error (ENOENT)
+      resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+      mockChildProcess.emit('error', new Error('spawn ENOENT'));
+      result = await resultPromise;
+
+      expect(result.complexity).toBe(expectedFallback.complexity);
+      expect(result.suggestedAgents).toHaveLength(expectedFallback.agentCount);
+      expect(result.useLeanPrompts).toBe(expectedFallback.useLeanPrompts);
+      expect(result.reason).toContain('spawn error');
+
+      // Reset mock
+      mockChildProcess = new EventEmitter();
+      mockChildProcess.stdout = new EventEmitter() as any;
+      mockChildProcess.stderr = new EventEmitter() as any;
+      mockChildProcess.kill = jest.fn();
+      mockSpawn.mockReturnValue(mockChildProcess as ChildProcess);
+
+      // Test 4: Invalid JSON response
+      resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+      mockChildProcess.stdout!.emit('data', Buffer.from('not valid json at all'));
+      mockChildProcess.emit('close', 0);
+      result = await resultPromise;
+
+      expect(result.complexity).toBe(expectedFallback.complexity);
+      expect(result.suggestedAgents).toHaveLength(expectedFallback.agentCount);
+      expect(result.useLeanPrompts).toBe(expectedFallback.useLeanPrompts);
+      expect(result.reason).toContain('parse');
+
+      // Reset mock
+      mockChildProcess = new EventEmitter();
+      mockChildProcess.stdout = new EventEmitter() as any;
+      mockChildProcess.stderr = new EventEmitter() as any;
+      mockChildProcess.kill = jest.fn();
+      mockSpawn.mockReturnValue(mockChildProcess as ChildProcess);
+
+      // Test 5: Valid outer JSON but missing complexity/reason in result
+      resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+      mockChildProcess.stdout!.emit('data', Buffer.from(JSON.stringify({ result: '{}' })));
+      mockChildProcess.emit('close', 0);
+      result = await resultPromise;
+
+      expect(result.complexity).toBe(expectedFallback.complexity);
+      expect(result.suggestedAgents).toHaveLength(expectedFallback.agentCount);
+      expect(result.useLeanPrompts).toBe(expectedFallback.useLeanPrompts);
+    });
+
+    it('should always provide 4 default agents for normal complexity fallback', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+      mockChildProcess.emit('error', new Error('any error'));
+      const result = await resultPromise;
+
+      // Should include first 4 from ALL_AGENTS: frontend, backend, database, testing
+      expect(result.suggestedAgents).toContain('frontend');
+      expect(result.suggestedAgents).toContain('backend');
+      expect(result.suggestedAgents).toContain('database');
+      expect(result.suggestedAgents).toContain('testing');
+      expect(result.suggestedAgents).toHaveLength(4);
+    });
+  });
 });
