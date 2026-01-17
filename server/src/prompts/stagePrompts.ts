@@ -778,7 +778,8 @@ ${testsRequired ? `
 2. Do NOT skip steps or change the plan
 3. If a step cannot be completed, raise a blocker
 4. Output IMPLEMENTATION_STATUS regularly for real-time progress
-${testsRequired ? '5. Always run tests before marking a step complete' : '5. Run existing tests to ensure no regressions'}`;
+${testsRequired ? '5. Always run tests before marking a step complete' : '5. Run existing tests to ensure no regressions'}
+6. **NEVER run commands that block waiting for user input** (e.g., watch modes, interactive prompts, REPLs). Always use flags like \`--run\`, \`--no-watch\`, \`--non-interactive\`, \`-y\`, or \`--ci\` when available.`;
 }
 
 /**
@@ -949,7 +950,8 @@ ${testsRequired ? `
 1. Focus ONLY on this step - do NOT work on other steps
 2. Do NOT output [IMPLEMENTATION_COMPLETE] - only [STEP_COMPLETE]
 3. If this step cannot be completed, raise a blocker
-4. Output IMPLEMENTATION_STATUS regularly for real-time progress`;
+4. Output IMPLEMENTATION_STATUS regularly for real-time progress
+5. **NEVER run commands that block waiting for user input** (e.g., watch modes, interactive prompts, REPLs). Always use flags like \`--run\`, \`--no-watch\`, \`--non-interactive\`, \`-y\`, or \`--ci\` when available.`;
 }
 
 /**
