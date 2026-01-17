@@ -761,6 +761,50 @@ describe('Streamlined Prompts', () => {
 
         expect(prompt).toContain('Only use: Read, Glob, Grep, and read-only Bash (git diff, git log, gh pr checks)');
       });
+
+      it('should include [READ-ONLY] prefix in frontend reviewer focus', () => {
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: ['frontend'],
+        };
+
+        const prompt = buildStage5PromptStreamlined(session, mockPlan, prInfo);
+
+        expect(prompt).toContain('[READ-ONLY] Review UI changes');
+      });
+
+      it('should include [READ-ONLY] prefix in backend reviewer focus', () => {
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: ['backend'],
+        };
+
+        const prompt = buildStage5PromptStreamlined(session, mockPlan, prInfo);
+
+        expect(prompt).toContain('[READ-ONLY] Review API changes');
+      });
+
+      it('should include [READ-ONLY] prefix in all agent definitions', () => {
+        // Test with all possible agents
+        const allAgents = ['frontend', 'backend', 'database', 'testing', 'infrastructure', 'documentation'];
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: allAgents,
+        };
+
+        const prompt = buildStage5PromptStreamlined(session, mockPlan, prInfo);
+
+        // Each agent's focus should start with [READ-ONLY]
+        expect(prompt).toContain('[READ-ONLY] Review UI changes'); // frontend
+        expect(prompt).toContain('[READ-ONLY] Review API changes'); // backend
+        expect(prompt).toContain('[READ-ONLY] Review data layer'); // database
+        expect(prompt).toContain('[READ-ONLY] Verify test coverage'); // testing
+        expect(prompt).toContain('[READ-ONLY] Check CI status'); // infrastructure
+        expect(prompt).toContain('[READ-ONLY] Review documentation changes'); // documentation
+      });
     });
   });
 
