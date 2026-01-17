@@ -2243,6 +2243,11 @@ export function createApp(
       await resultHandler.saveConversationStart(sessionDir, 1, prompt);
 
       // Spawn Claude (fire and forget, errors logged)
+      // NOTE: sessionId is intentionally omitted here for NEW sessions.
+      // New features start fresh without a Claude conversation context.
+      // The claudeSessionId is captured from the spawn result (in handleStage1Result)
+      // and saved to the session for use by retries/resumes later.
+      // See: Stage 1 retry (line ~3772) and queue/resume (line ~2615) which DO pass sessionId.
       let hasReceivedOutput = false;
       orchestrator.spawn({
         prompt,

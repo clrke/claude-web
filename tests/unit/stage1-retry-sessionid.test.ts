@@ -4,14 +4,17 @@ import { OutputParser } from '../../server/src/services/OutputParser';
 /**
  * Tests for Stage 1 sessionId preservation across different scenarios:
  *
- * 1. Stage 1 Retry - When Stage 1 is retried via the /api/sessions/:projectId/:featureId/retry
+ * 1. Initial Spawn - New sessions intentionally start WITHOUT sessionId.
+ *    The claudeSessionId is captured from the spawn result and saved for later use.
+ *
+ * 2. Stage 1 Retry - When Stage 1 is retried via the /api/sessions/:projectId/:featureId/retry
  *    endpoint, sessionId should be passed to maintain Claude conversation context.
  *
- * 2. Queue/Resume - When a session was paused (queued) and later resumed, sessionId should
+ * 3. Queue/Resume - When a session was paused (queued) and later resumed, sessionId should
  *    be passed so the resumed session maintains context from before it was paused.
  *
- * Previously, both these paths were NOT passing sessionId, causing sessions to lose
- * their Claude conversation context.
+ * The initial spawn is the ONLY place where sessionId is intentionally omitted.
+ * All retry and resume paths must pass sessionId to maintain conversation context.
  */
 
 describe('Stage 1 Retry SessionId Preservation', () => {
@@ -263,6 +266,129 @@ describe('Stage 1 Queue/Resume SessionId Preservation', () => {
 
       expect(cmd.args).toContain('--resume');
       expect(cmd.args).toContain('partial-stage1-session-abc');
+    });
+  });
+});
+
+describe('Stage 1 Initial Spawn - Intentional SessionId Omission', () => {
+  let orchestrator: ClaudeOrchestrator;
+  let outputParser: OutputParser;
+
+  beforeEach(() => {
+    outputParser = new OutputParser();
+    orchestrator = new ClaudeOrchestrator(outputParser);
+  });
+
+  /**
+   * This test documents that initial Stage 1 spawns INTENTIONALLY omit sessionId.
+   *
+   * Why sessionId is omitted for initial spawns:
+   * - New features start fresh without any Claude conversation context
+   * - The claudeSessionId is captured from the spawn result (via handleStage1Result)
+   * - This captured sessionId is then saved to the session for future retries/resumes
+   *
+   * This is NOT a bug - it's the intended behavior. See the code comment at
+   * the initial Stage 1 spawn location (around line 2252 in server/src/app.ts).
+   */
+  describe('new session starts without sessionId', () => {
+    it('should start fresh without --resume flag for brand new features', () => {
+      // Brand new session has no claudeSessionId yet
+      const newSession = {
+        claudeSessionId: null as string | null,
+        projectPath: '/test/project',
+        featureId: 'brand-new-feature',
+      };
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Discover requirements for new feature',
+        projectPath: newSession.projectPath,
+        // sessionId is intentionally NOT passed for new sessions
+        sessionId: undefined,
+        allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+      });
+
+      // New sessions should NOT have --resume flag
+      expect(cmd.args).not.toContain('--resume');
+    });
+
+    it('should document the sessionId lifecycle: omit -> capture -> reuse', () => {
+      /**
+       * SessionId lifecycle for Stage 1:
+       *
+       * 1. INITIAL SPAWN: sessionId omitted (undefined)
+       *    - orchestrator.spawn({ ..., sessionId: undefined })
+       *    - Claude starts fresh conversation
+       *    - Result contains new claudeSessionId
+       *
+       * 2. SAVE: claudeSessionId captured from result
+       *    - handleStage1Result saves result.sessionId to session.claudeSessionId
+       *
+       * 3. RETRY/RESUME: sessionId passed to maintain context
+       *    - orchestrator.spawn({ ..., sessionId: session.claudeSessionId || undefined })
+       *    - Claude resumes previous conversation
+       */
+
+      // Phase 1: Initial spawn - no sessionId
+      const initialSpawnCmd = orchestrator.buildCommand({
+        prompt: 'Initial discovery',
+        projectPath: '/test/project',
+        sessionId: undefined, // Intentionally omitted
+        allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+      });
+      expect(initialSpawnCmd.args).not.toContain('--resume');
+
+      // Phase 2: After Claude responds, claudeSessionId is captured
+      // (simulated - in reality this comes from the spawn result)
+      const capturedSessionId = 'claude-session-from-result-xyz';
+
+      // Phase 3: Retry/resume uses the captured sessionId
+      const retrySpawnCmd = orchestrator.buildCommand({
+        prompt: 'Retry discovery',
+        projectPath: '/test/project',
+        sessionId: capturedSessionId, // Now passed for retry
+        allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+      });
+      expect(retrySpawnCmd.args).toContain('--resume');
+      expect(retrySpawnCmd.args).toContain(capturedSessionId);
+    });
+  });
+
+  describe('contrast: initial vs retry/resume behavior', () => {
+    it('should clearly differentiate when sessionId is omitted vs passed', () => {
+      // OMIT sessionId: Only for brand new features (initial spawn)
+      const scenariosWhereSessionIdOmitted = [
+        { name: 'New feature initial spawn', sessionId: undefined },
+      ];
+
+      // PASS sessionId: All retry and resume scenarios
+      const scenariosWhereSessionIdPassed = [
+        { name: 'Stage 1 retry', sessionId: 'retry-session-123' },
+        { name: 'Queue/resume', sessionId: 'resume-session-456' },
+        { name: 'Stage 2+ (all have sessionId)', sessionId: 'stage2-session-789' },
+      ];
+
+      // Verify omitted scenarios don't have --resume
+      for (const scenario of scenariosWhereSessionIdOmitted) {
+        const cmd = orchestrator.buildCommand({
+          prompt: scenario.name,
+          projectPath: '/test/project',
+          sessionId: scenario.sessionId,
+          allowedTools: ['Read'],
+        });
+        expect(cmd.args).not.toContain('--resume');
+      }
+
+      // Verify passed scenarios DO have --resume
+      for (const scenario of scenariosWhereSessionIdPassed) {
+        const cmd = orchestrator.buildCommand({
+          prompt: scenario.name,
+          projectPath: '/test/project',
+          sessionId: scenario.sessionId,
+          allowedTools: ['Read'],
+        });
+        expect(cmd.args).toContain('--resume');
+        expect(cmd.args).toContain(scenario.sessionId);
+      }
     });
   });
 });
