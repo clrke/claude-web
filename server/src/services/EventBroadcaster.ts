@@ -29,6 +29,16 @@ export interface ExecutionStatusOptions {
   progress?: StepProgress;
   isIntermediate?: boolean;
   queuePosition?: number | null;
+  /** Target stage for auto-transitions (e.g., plan_changes_detected) */
+  autoTransitionTo?: number;
+  /** Reason for the status change (e.g., plan_changes_detected) */
+  reason?: string;
+  /** Step IDs added during Stage 5 PR Review */
+  addedStepIds?: string[];
+  /** Step IDs removed during Stage 5 PR Review */
+  removedStepIds?: string[];
+  /** Step IDs reset to pending due to content changes */
+  resetStepIds?: string[];
 }
 
 /**
@@ -170,6 +180,8 @@ export class EventBroadcaster {
       ...(options?.stepId && { stepId: options.stepId }),
       ...(options?.progress && { progress: options.progress }),
       ...(options?.isIntermediate !== undefined && { isIntermediate: options.isIntermediate }),
+      ...(options?.autoTransitionTo !== undefined && { autoTransitionTo: options.autoTransitionTo }),
+      ...(options?.reason && { reason: options.reason }),
     };
     this.io.to(room).emit('execution.status', event);
   }

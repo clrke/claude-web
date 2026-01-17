@@ -1,7 +1,7 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import path from 'path';
-import crypto from 'crypto';
-import { computeStepHash, isStepContentUnchanged } from './utils/stepContentHash';
+import { isStepContentUnchanged, computePlanHash, savePlanSnapshot, hasPlanChangedSinceSnapshot, deletePlanSnapshot } from './utils/stepContentHash';
+import { syncPlanFromMarkdown, getValidPlanMdPath } from './utils/syncPlanFromMarkdown';
 import { readFile } from 'fs/promises';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
@@ -1648,6 +1648,17 @@ async function spawnStage5PRReview(
   const sessionDir = `${session.projectId}/${session.featureId}`;
   const statusPath = `${sessionDir}/status.json`;
 
+  // Save plan snapshot before Stage 5 for change detection
+  // This allows us to detect if Claude edits plan files during PR review
+  const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+  if (plan) {
+    const planHash = computePlanHash(plan);
+    const stepIds = plan.steps.map(s => s.id);
+    const physicalSessionDir = storage.getAbsolutePath(sessionDir);
+    savePlanSnapshot(physicalSessionDir, planHash, plan.planVersion, stepIds);
+    console.log(`Saved plan snapshot for ${session.featureId} (hash: ${planHash.substring(0, 8)}..., ${stepIds.length} steps)`);
+  }
+
   // Update status to running
   const status = await storage.readJson<Record<string, unknown>>(statusPath);
   if (status) {
@@ -1739,6 +1750,97 @@ async function handleStage5Result(
     conversations.entries.push(entryData);
   }
   await storage.writeJson(conversationsPath, conversations);
+
+  // Sync plan.json with plan.md after Claude completes
+  // This handles the case where Claude uses the Edit tool directly on plan.md
+  // instead of outputting [PLAN_STEP] markers. Must happen before hash comparison.
+  const planMdPath = getValidPlanMdPath(session.claudePlanFilePath);
+  if (planMdPath) {
+    const planPath = `${sessionDir}/plan.json`;
+    const currentPlan = await storage.readJson<Plan>(planPath);
+    if (currentPlan) {
+      const syncResult = await syncPlanFromMarkdown(planMdPath, currentPlan);
+      if (syncResult?.syncResult.changed) {
+        await storage.writeJson(planPath, syncResult.updatedPlan);
+        console.log(`[Stage 5] Synced plan.json from plan.md for ${session.featureId}: ${syncResult.syncResult.addedCount} added, ${syncResult.syncResult.updatedCount} updated, ${syncResult.syncResult.removedCount} removed`);
+      } else if (syncResult) {
+        console.log(`[Stage 5] plan.md and plan.json are in sync for ${session.featureId}`);
+      }
+    }
+  }
+
+  // Check if plan was changed during Stage 5 using deterministic hash comparison
+  const physicalSessionDir = storage.getAbsolutePath(sessionDir);
+  const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+  if (plan) {
+    const changeResult = hasPlanChangedSinceSnapshot(physicalSessionDir, plan);
+    if (changeResult?.changed) {
+      const { addedStepIds, removedStepIds } = changeResult;
+
+      // Auto-reset completed steps whose content has changed
+      // This handles both new steps (no hash) and modified existing steps (hash mismatch)
+      const resetStepIds: string[] = [];
+      for (const step of plan.steps) {
+        if (step.status === 'completed' && !isStepContentUnchanged(step)) {
+          step.status = 'pending';
+          step.contentHash = null;
+          resetStepIds.push(step.id);
+        }
+      }
+
+      // Save updated plan with reset steps
+      if (resetStepIds.length > 0) {
+        await storage.writeJson(`${sessionDir}/plan.json`, plan);
+        console.log(`[Stage 5] Reset ${resetStepIds.length} steps with changed content: ${resetStepIds.join(', ')}`);
+      }
+
+      console.log(`[Stage 5] Plan changed during PR review for ${session.featureId} - transitioning to Stage 2 (added: ${addedStepIds.length}, removed: ${removedStepIds.length}, reset: ${resetStepIds.length})`);
+
+      // Broadcast plan change detection event to notify client of auto-transition
+      eventBroadcaster?.executionStatus(
+        session.projectId,
+        session.featureId,
+        'running',
+        'plan_changes_detected',
+        { stage: 5, autoTransitionTo: 2, reason: 'Plan steps modified during PR Review', addedStepIds, removedStepIds, resetStepIds }
+      );
+
+      // Clean up snapshot
+      deletePlanSnapshot(physicalSessionDir);
+
+      // Transition back to Stage 2 for plan review
+      const previousStage = session.currentStage;
+      const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 2);
+      eventBroadcaster?.stageChanged(updatedSession, previousStage);
+
+      // Build plan revision prompt with specific info about what changed
+      let revisionFeedback = 'Plan steps were modified during PR review.';
+      if (addedStepIds.length > 0) {
+        // Get the titles of added steps for context
+        const addedSteps = plan.steps.filter(s => addedStepIds.includes(s.id));
+        const addedStepDescriptions = addedSteps.map(s => `- ${s.id}: ${s.title}`).join('\n');
+        revisionFeedback += `\n\n**New steps added during PR Review (need your review):**\n${addedStepDescriptions}`;
+      }
+      if (removedStepIds.length > 0) {
+        revisionFeedback += `\n\n**Steps removed:** ${removedStepIds.join(', ')}`;
+      }
+      if (resetStepIds.length > 0) {
+        // Get the titles of reset steps for context
+        const resetSteps = plan.steps.filter(s => resetStepIds.includes(s.id));
+        const resetStepDescriptions = resetSteps.map(s => `- ${s.id}: ${s.title}`).join('\n');
+        revisionFeedback += `\n\n**Steps with modified content (reset to pending for re-implementation):**\n${resetStepDescriptions}`;
+      }
+      revisionFeedback += '\n\nPlease review the updated plan. Ask clarifying questions if needed, then approve the plan.';
+
+      const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback);
+      await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, revisionPrompt);
+
+      return;
+    } else {
+      // Clean up snapshot after successful comparison
+      deletePlanSnapshot(physicalSessionDir);
+    }
+  }
 
   // Check for CI failure - requires return to Stage 2
   if (result.parsed.ciFailed || result.parsed.returnToStage2) {
