@@ -157,22 +157,12 @@ export class ClaudeResultHandler {
       await this.savePlanSteps(sessionDir, planSteps);
     }
 
-    // Update session with Claude session ID and plan file path
-    const sessionUpdates: Partial<Session> = {};
-
+    // Update session with Claude session ID
     if (result.sessionId) {
-      sessionUpdates.claudeSessionId = result.sessionId;
-    }
-
-    if (result.parsed.planFilePath) {
-      sessionUpdates.claudePlanFilePath = result.parsed.planFilePath;
-    }
-
-    if (Object.keys(sessionUpdates).length > 0) {
       await this.sessionManager.updateSession(
         session.projectId,
         session.featureId,
-        sessionUpdates
+        { claudeSessionId: result.sessionId }
       );
     }
 

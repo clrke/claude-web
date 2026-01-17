@@ -83,7 +83,6 @@ export interface ParsedMarker {
   planModeEntered: boolean;
   /** @deprecated Not used for business logic. Will be removed in future version. */
   planModeExited: boolean;
-  planFilePath: string | null;
   implementationComplete: boolean;
   implementationSummary: string | null;
   implementationStatus: ParsedImplementationStatus | null;
@@ -109,7 +108,6 @@ export class OutputParser {
       stepsCompleted,
       planModeEntered: input.includes('[PLAN_MODE_ENTERED]'),
       planModeExited: input.includes('[PLAN_MODE_EXITED]'),
-      planFilePath: this.parsePlanFile(input),
       implementationComplete: input.includes('[IMPLEMENTATION_COMPLETE]'),
       implementationSummary: implementationInfo.summary,
       implementationStatus: this.parseImplementationStatus(input),
@@ -340,12 +338,6 @@ export class OutputParser {
     }
 
     return steps;
-  }
-
-  private parsePlanFile(input: string): string | null {
-    const regex = /\[PLAN_FILE\s+path="([^"]+)"\]/;
-    const match = input.match(regex);
-    return match ? match[1] : null;
   }
 
   private parseImplementationComplete(input: string): { summary: string | null; allTestsPassing: boolean; testsAdded: string[] } {

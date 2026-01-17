@@ -224,15 +224,6 @@ Step 14 is complete.
     });
   });
 
-  describe('parsePlanFile', () => {
-    it('should extract PLAN_FILE path', () => {
-      const input = `[PLAN_FILE path="/Users/arke/.claude/plans/my-plan.md"]`;
-      const result = parser.parse(input);
-
-      expect(result.planFilePath).toBe('/Users/arke/.claude/plans/my-plan.md');
-    });
-  });
-
   describe('parseImplementationComplete', () => {
     it('should parse IMPLEMENTATION_COMPLETE marker', () => {
       const input = `

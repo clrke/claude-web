@@ -124,7 +124,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -184,7 +184,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: true,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -228,7 +228,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -278,7 +278,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: true,
           planModeExited: true,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -302,39 +302,6 @@ describe('ClaudeResultHandler', () => {
     });
   });
 
-  describe('savePlanFilePath', () => {
-    it('should update session with Claude plan file path', async () => {
-      const result: ClaudeResult = {
-        output: 'Response with plan file',
-        sessionId: 'claude-123',
-        costUsd: 0.05,
-        isError: false,
-        parsed: {
-          decisions: [],
-          planSteps: [],
-          stepCompleted: null,
-          stepsCompleted: [],
-          planModeEntered: true,
-          planModeExited: true,
-          planFilePath: '/Users/arke/.claude/plans/my-feature.md',
-          implementationComplete: false,
-          implementationSummary: null,
-          implementationStatus: null,
-          prCreated: null,
-          planApproved: false,
-        },
-      };
-
-      await handler.handleStage1Result(mockSession, result, 'Test prompt');
-
-      const session = await storage.readJson<Session>(
-        `${mockSession.projectId}/${mockSession.featureId}/session.json`
-      );
-
-      expect(session!.claudePlanFilePath).toBe('/Users/arke/.claude/plans/my-feature.md');
-    });
-  });
-
   describe('saveClaudeSessionId', () => {
     it('should update session with Claude session ID', async () => {
       const result: ClaudeResult = {
@@ -349,7 +316,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -428,7 +395,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -476,7 +443,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -516,7 +483,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -550,7 +517,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -588,7 +555,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -710,7 +677,7 @@ describe('ClaudeResultHandler', () => {
         stepsCompleted: [],
         planModeEntered: false,
         planModeExited: false,
-        planFilePath: null,
+        
         implementationComplete: false,
         implementationSummary: null,
         implementationStatus: null,
@@ -1593,7 +1560,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1670,7 +1637,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1729,7 +1696,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1792,7 +1759,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1864,7 +1831,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1912,7 +1879,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: false,
           planModeExited: false,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1947,7 +1914,7 @@ describe('ClaudeResultHandler', () => {
         stepsCompleted: [],
         planModeEntered: false,
         planModeExited: false,
-        planFilePath: null,
+        
         implementationComplete: false,
         implementationSummary: null,
         implementationStatus: null,
@@ -2146,7 +2113,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: true,
           planModeExited: true,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -2193,7 +2160,7 @@ describe('ClaudeResultHandler', () => {
           stepsCompleted: [],
           planModeEntered: true,
           planModeExited: true,
-          planFilePath: null,
+          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -2307,7 +2274,7 @@ describe('ClaudeResultHandler', () => {
         stepsCompleted: [],
         planModeEntered: false,
         planModeExited: false,
-        planFilePath: null,
+        
         implementationComplete: false,
         implementationSummary: null,
         implementationStatus: null,

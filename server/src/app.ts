@@ -3205,7 +3205,6 @@ Step description referencing specific files found during exploration.
 [/PLAN_STEP]
 
 After creating all steps, write the plan to a file and output:
-[PLAN_FILE path="/path/to/plan.md"]
 [PLAN_MODE_EXITED]`;
 
                 // Fire and forget - spawn Claude to create plan
@@ -3547,7 +3546,6 @@ Step description referencing specific files found during exploration.
 [/PLAN_STEP]
 
 After creating all steps, write the plan to a file and output:
-[PLAN_FILE path="/path/to/plan.md"]
 [PLAN_MODE_EXITED]`;
 
               // Save "started" conversation entry

@@ -210,8 +210,7 @@ Your plan will be automatically validated. To pass validation:
 1. Use the Edit tool to write the complete plan to: ${session.claudePlanFilePath}
    - This file already exists and you have permission to edit it
    - Include ALL plan sections: meta, steps, dependencies, test coverage, acceptance mapping
-2. Output: [PLAN_FILE path="${session.claudePlanFilePath}"]
-3. Exit plan mode and output: [PLAN_MODE_EXITED]`;
+2. Exit plan mode and output: [PLAN_MODE_EXITED]`;
 }
 
 /**
@@ -684,8 +683,7 @@ Question here?
 When you have enough information:
 1. Generate the implementation plan with [PLAN_STEP] markers
 2. Use the Edit tool to write the plan to: ${claudePlanFilePath || '/path/to/plan.md'}
-3. Output: [PLAN_FILE path="${claudePlanFilePath || '/path/to/plan.md'}"]
-4. Exit plan mode and output: [PLAN_MODE_EXITED]`;
+3. Exit plan mode and output: [PLAN_MODE_EXITED]`;
   }
 
   // Stage 2 continuation
