@@ -210,6 +210,7 @@ Spawn review agents → Wait for CI → Present issues → User decides → Fix 
 **Purpose:** Human decision point before merge.
 
 **User options:**
+
 | Action | Result |
 |--------|--------|
 | **Complete Session** | Session marked `completed`, PR ready to merge |
@@ -1670,7 +1671,7 @@ Low confidence responses trigger HALF_OPEN circuit breaker state for user review
 
 Each stage uses a tailored prompt with output format instructions, subagent guidance, and stage-specific context.
 
-#### Stage 1: Feature Discovery
+#### Stage 1 Prompt: Feature Discovery
 
 Uses Claude Code's native plan mode for structured exploration and planning.
 
@@ -1744,7 +1745,7 @@ Description of what this step accomplishes.
 [PLAN_FILE path="/path/to/plan/file.md"]
 ```
 
-#### Stage 2: Plan Review
+#### Stage 2 Prompt: Plan Review
 
 ```
 You are reviewing an implementation plan. Find issues and present them as decisions for the user.
@@ -1798,7 +1799,7 @@ How should we address this?
 issues or design decisions during execution, but these must be sent back to Stage 2
 for plan updates. This ensures the plan remains the single source of truth.
 
-#### Stage 3: Implementation
+#### Stage 3 Prompt: Implementation
 
 ```
 You are implementing an approved plan. Execute each step carefully.
@@ -1872,7 +1873,7 @@ This ensures the plan remains the single source of truth and all changes are pro
 | Discovered dependency | Add as comment, Stage 2 reviews and adds to plan |
 | Scope change needed | Return to Stage 2 for plan revision |
 
-#### Stage 4: PR Creation
+#### Stage 4 Prompt: PR Creation
 
 After compact, recontextualized with: git diff, commit history, changed files, test results.
 
@@ -1937,7 +1938,7 @@ Branch: {{featureBranch}} → {{baseBranch}}
 4. Return the PR URL in the output
 ```
 
-#### Stage 5: PR Review
+#### Stage 5 Prompt: PR Review
 
 After compact, recontextualized with: PR description, git diff, changed files content, test results.
 
@@ -2049,7 +2050,7 @@ Stage 5 cannot directly update the plan. When review issues require plan changes
 
 This ensures all plan changes go through proper review before implementation.
 
-#### Stage 6: Final Approval
+#### Stage 6 Prompt: Final Approval
 
 After Claude approves the PR in Stage 5, the session transitions to Stage 6 for user final review. This stage gives the user control over the final decision rather than auto-completing.
 
@@ -2253,7 +2254,7 @@ The same domain agents are used across stages with stage-appropriate focus. Each
 | **Test** | Testing patterns, coverage | Review test strategy | Verify test coverage |
 | **CI** | - | - | Wait for CI status |
 
-#### Stage 4: PR Creation Agents (Task-Specific)
+#### Stage 4 Prompt: PR Creation Agents (Task-Specific)
 
 | Agent | Purpose | Output |
 |-------|---------|--------|
