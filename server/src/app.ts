@@ -20,6 +20,7 @@ import {
   buildStage1Prompt,
   buildStage2Prompt,
   buildStage2PromptLean,
+  buildPlanReviewContinuationPrompt,
   buildStage4Prompt,
   buildStage4PromptLean,
   buildStage5Prompt,
@@ -537,7 +538,7 @@ async function handleStage2Completion(
 
     try {
       await withLock(session.projectId, session.featureId, 2, async () => {
-        // Build lean continuation prompt for the next iteration
+        // Build continuation prompt for the next iteration
         const nextIteration = reviewCount + 1;
         const updatedSession = await sessionManager.getSession(session.projectId, session.featureId);
         if (!updatedSession) {
@@ -545,13 +546,13 @@ async function handleStage2Completion(
           return;
         }
 
-        // Use lean prompt for iteration 2+ when resuming an existing session
-        const useLean = updatedSession.claudeSessionId && nextIteration > 1;
-        const continuationPrompt = useLean && plan
-          ? buildStage2PromptLean(plan, nextIteration, updatedSession.planValidationContext, updatedSession.claudePlanFilePath)
-          : plan
-            ? buildStage2Prompt(updatedSession, plan, nextIteration)
-            : 'Continue reviewing the plan.';
+        // Use the specialized continuation prompt for iterative reviews
+        const continuationPrompt = buildPlanReviewContinuationPrompt(
+          nextIteration,
+          MAX_PLAN_REVIEW_ITERATIONS,
+          updatedSession.claudePlanFilePath,
+          result.parsed.decisions.length
+        );
 
         await spawnStage2Review(
           updatedSession,

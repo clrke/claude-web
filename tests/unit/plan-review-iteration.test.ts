@@ -4,6 +4,7 @@ import {
 } from '../../server/src/services/ClaudeOrchestrator';
 import { ParsedMarker } from '../../server/src/services/OutputParser';
 import { shouldContinuePlanReview } from '../../server/src/app';
+import { buildPlanReviewContinuationPrompt } from '../../server/src/prompts/stagePrompts';
 
 /**
  * Tests for plan review iteration constants and hasDecisionNeeded tracking.
@@ -374,6 +375,159 @@ describe('handleStage2Completion continuation logic', () => {
 
       // Both approved
       expect(derivePlanApproved(true, true)).toBe(true);
+    });
+  });
+});
+
+describe('buildPlanReviewContinuationPrompt', () => {
+  describe('basic prompt structure', () => {
+    it('should include current iteration and max iterations', () => {
+      const prompt = buildPlanReviewContinuationPrompt(3, 10);
+
+      expect(prompt).toContain('iteration 3/10');
+      expect(prompt).toContain('Maximum iterations (10)');
+    });
+
+    it('should include instructions for completing review', () => {
+      const prompt = buildPlanReviewContinuationPrompt(1, 10);
+
+      expect(prompt).toContain('[DECISION_NEEDED]');
+      expect(prompt).toContain('[PLAN_APPROVED]');
+      expect(prompt).toContain('with NO [DECISION_NEEDED] markers');
+    });
+
+    it('should include termination conditions', () => {
+      const prompt = buildPlanReviewContinuationPrompt(1, 10);
+
+      expect(prompt).toContain('You output [PLAN_APPROVED] with no [DECISION_NEEDED] markers');
+      expect(prompt).toContain('Maximum iterations (10) is reached');
+    });
+  });
+
+  describe('plan file path', () => {
+    it('should include plan file path when provided', () => {
+      const prompt = buildPlanReviewContinuationPrompt(1, 10, '/path/to/plan.md');
+
+      expect(prompt).toContain('Plan file: /path/to/plan.md');
+    });
+
+    it('should not include plan file section when path is null', () => {
+      const prompt = buildPlanReviewContinuationPrompt(1, 10, null);
+
+      expect(prompt).not.toContain('Plan file:');
+    });
+
+    it('should not include plan file section when path is undefined', () => {
+      const prompt = buildPlanReviewContinuationPrompt(1, 10, undefined);
+
+      expect(prompt).not.toContain('Plan file:');
+    });
+  });
+
+  describe('pending decision count', () => {
+    it('should include decision count when provided and > 0', () => {
+      const prompt = buildPlanReviewContinuationPrompt(2, 10, null, 3);
+
+      expect(prompt).toContain('You raised 3 question(s) in the previous iteration');
+    });
+
+    it('should not include decision context when count is 0', () => {
+      const prompt = buildPlanReviewContinuationPrompt(2, 10, null, 0);
+
+      expect(prompt).not.toContain('You raised');
+      expect(prompt).not.toContain('question(s) in the previous iteration');
+    });
+
+    it('should not include decision context when count is undefined', () => {
+      const prompt = buildPlanReviewContinuationPrompt(2, 10, null, undefined);
+
+      expect(prompt).not.toContain('You raised');
+    });
+
+    it('should handle single decision correctly', () => {
+      const prompt = buildPlanReviewContinuationPrompt(2, 10, null, 1);
+
+      expect(prompt).toContain('You raised 1 question(s)');
+    });
+  });
+
+  describe('urgency note for low remaining iterations', () => {
+    it('should show urgency note when 2 iterations remaining', () => {
+      const prompt = buildPlanReviewContinuationPrompt(8, 10);
+
+      expect(prompt).toContain('⚠️ Only 2 iteration(s) remaining before forced approval');
+    });
+
+    it('should show urgency note when 1 iteration remaining', () => {
+      const prompt = buildPlanReviewContinuationPrompt(9, 10);
+
+      expect(prompt).toContain('⚠️ Only 1 iteration(s) remaining before forced approval');
+    });
+
+    it('should show urgency note when 0 iterations remaining (at limit)', () => {
+      const prompt = buildPlanReviewContinuationPrompt(10, 10);
+
+      expect(prompt).toContain('⚠️ Only 0 iteration(s) remaining before forced approval');
+    });
+
+    it('should NOT show urgency note when 3+ iterations remaining', () => {
+      const prompt = buildPlanReviewContinuationPrompt(7, 10);
+
+      expect(prompt).not.toContain('⚠️');
+      expect(prompt).not.toContain('remaining before forced approval');
+    });
+
+    it('should NOT show urgency note early in iteration cycle', () => {
+      const prompt = buildPlanReviewContinuationPrompt(1, 10);
+
+      expect(prompt).not.toContain('⚠️');
+    });
+  });
+
+  describe('custom max iterations', () => {
+    it('should use custom max iterations value', () => {
+      const prompt = buildPlanReviewContinuationPrompt(3, 5);
+
+      expect(prompt).toContain('iteration 3/5');
+      expect(prompt).toContain('Maximum iterations (5)');
+    });
+
+    it('should calculate remaining iterations correctly with custom max', () => {
+      const prompt = buildPlanReviewContinuationPrompt(3, 5);
+
+      // 5 - 3 = 2, should show urgency
+      expect(prompt).toContain('⚠️ Only 2 iteration(s) remaining');
+    });
+  });
+
+  describe('full prompt with all options', () => {
+    it('should combine all elements correctly', () => {
+      const prompt = buildPlanReviewContinuationPrompt(8, 10, '/home/user/plan.md', 2);
+
+      // Plan file
+      expect(prompt).toContain('Plan file: /home/user/plan.md');
+
+      // Decision count
+      expect(prompt).toContain('You raised 2 question(s) in the previous iteration');
+
+      // Urgency (10 - 8 = 2 remaining)
+      expect(prompt).toContain('⚠️ Only 2 iteration(s) remaining');
+
+      // Iteration info
+      expect(prompt).toContain('iteration 8/10');
+
+      // Instructions
+      expect(prompt).toContain('[DECISION_NEEDED]');
+      expect(prompt).toContain('[PLAN_APPROVED]');
+    });
+  });
+
+  describe('integration with MAX_PLAN_REVIEW_ITERATIONS', () => {
+    it('should work correctly with the constant value', () => {
+      const prompt = buildPlanReviewContinuationPrompt(5, MAX_PLAN_REVIEW_ITERATIONS);
+
+      expect(prompt).toContain(`iteration 5/${MAX_PLAN_REVIEW_ITERATIONS}`);
+      expect(prompt).toContain(`Maximum iterations (${MAX_PLAN_REVIEW_ITERATIONS})`);
     });
   });
 });
