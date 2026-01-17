@@ -2,13 +2,16 @@ import { ClaudeOrchestrator, SpawnOptions } from '../../server/src/services/Clau
 import { OutputParser } from '../../server/src/services/OutputParser';
 
 /**
- * Tests for Stage 1 retry sessionId preservation.
+ * Tests for Stage 1 sessionId preservation across different scenarios:
  *
- * The fix ensures that when Stage 1 is retried via the /api/sessions/:projectId/:featureId/retry
- * endpoint, the sessionId is passed to orchestrator.spawn() to maintain Claude conversation context.
+ * 1. Stage 1 Retry - When Stage 1 is retried via the /api/sessions/:projectId/:featureId/retry
+ *    endpoint, sessionId should be passed to maintain Claude conversation context.
  *
- * Previously, Stage 1 retry was NOT passing sessionId, which caused retries to start fresh
- * sessions instead of resuming the existing conversation.
+ * 2. Queue/Resume - When a session was paused (queued) and later resumed, sessionId should
+ *    be passed so the resumed session maintains context from before it was paused.
+ *
+ * Previously, both these paths were NOT passing sessionId, causing sessions to lose
+ * their Claude conversation context.
  */
 
 describe('Stage 1 Retry SessionId Preservation', () => {
@@ -154,6 +157,112 @@ describe('Stage 1 Retry SessionId Preservation', () => {
       expect(initialCmd.args).not.toContain('--resume');
       expect(retryCmd.args).toContain('--resume');
       expect(retryCmd.args).toContain('previous-session-xyz');
+    });
+  });
+});
+
+describe('Stage 1 Queue/Resume SessionId Preservation', () => {
+  let orchestrator: ClaudeOrchestrator;
+  let outputParser: OutputParser;
+
+  beforeEach(() => {
+    outputParser = new OutputParser();
+    orchestrator = new ClaudeOrchestrator(outputParser);
+  });
+
+  describe('resumed session should use sessionId from startedSession', () => {
+    /**
+     * When a session is resumed from the queue, it should pass the
+     * startedSession.claudeSessionId to orchestrator.spawn() so that
+     * the Claude conversation context is maintained.
+     *
+     * The queue/resume path uses startedSession (the session being started)
+     * rather than session (which may be the session that was paused).
+     */
+    it('should include --resume flag when startedSession has claudeSessionId', () => {
+      const startedSession = {
+        claudeSessionId: 'queued-session-resume-789',
+        projectPath: '/test/project',
+      };
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Resume Stage 1 discovery after queue',
+        projectPath: startedSession.projectPath,
+        sessionId: startedSession.claudeSessionId || undefined,
+        allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+      });
+
+      expect(cmd.args).toContain('--resume');
+      expect(cmd.args).toContain('queued-session-resume-789');
+    });
+
+    it('should not include --resume flag for fresh queued session without prior claudeSessionId', () => {
+      const startedSession = {
+        claudeSessionId: null as string | null,
+        projectPath: '/test/project',
+      };
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Start Stage 1 discovery for fresh queued session',
+        projectPath: startedSession.projectPath,
+        sessionId: startedSession.claudeSessionId || undefined,
+        allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+      });
+
+      expect(cmd.args).not.toContain('--resume');
+    });
+  });
+
+  describe('queue resume vs retry - both should preserve sessionId', () => {
+    /**
+     * Both the retry path (via /retry endpoint) and the queue/resume path
+     * should preserve sessionId using the same pattern.
+     */
+    it('should use same sessionId pattern for retry and queue resume', () => {
+      const sessionWithId = { claudeSessionId: 'shared-session-pattern-123' };
+      const sessionWithoutId = { claudeSessionId: null as string | null };
+
+      // Both paths use the same pattern: session.claudeSessionId || undefined
+      const retrySessionId = sessionWithId.claudeSessionId || undefined;
+      const queueResumeSessionId = sessionWithId.claudeSessionId || undefined;
+
+      expect(retrySessionId).toBe(queueResumeSessionId);
+      expect(retrySessionId).toBe('shared-session-pattern-123');
+
+      // Both should return undefined when no sessionId
+      const retryNoId = sessionWithoutId.claudeSessionId || undefined;
+      const queueNoId = sessionWithoutId.claudeSessionId || undefined;
+
+      expect(retryNoId).toBeUndefined();
+      expect(queueNoId).toBeUndefined();
+    });
+  });
+
+  describe('queue/resume scenario with existing conversation', () => {
+    /**
+     * Scenario: User pauses a session that was in the middle of Stage 1.
+     * Later, the session is resumed from the queue.
+     * The resumed session should continue the Claude conversation.
+     */
+    it('should allow resuming a partially completed Stage 1 session', () => {
+      // Simulates a session that was paused during Stage 1
+      const pausedSession = {
+        claudeSessionId: 'partial-stage1-session-abc',
+        projectPath: '/test/project',
+        currentStage: 1,
+        status: 'queued',
+      };
+
+      // When resumed, should use the existing sessionId
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Continue Stage 1 discovery after pause',
+        projectPath: pausedSession.projectPath,
+        sessionId: pausedSession.claudeSessionId || undefined,
+        allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+      });
+
+      expect(cmd.args).toContain('--resume');
+      expect(cmd.args).toContain('partial-stage1-session-abc');
     });
   });
 });

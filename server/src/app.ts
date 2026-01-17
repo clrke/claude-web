@@ -2612,6 +2612,7 @@ export function createApp(
           orchestrator.spawn({
             prompt,
             projectPath: startedSession.projectPath,
+            sessionId: startedSession.claudeSessionId || undefined,
             allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
             onOutput: (output, isComplete) => {
               if (!hasReceivedOutput) {
