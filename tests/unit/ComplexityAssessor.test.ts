@@ -458,5 +458,339 @@ describe('ComplexityAssessor', () => {
         mockSpawn.mockReturnValue(mockChildProcess as ChildProcess);
       }
     });
+
+    it('should return ["frontend"] as default for trivial complexity', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, [], '/project');
+
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'trivial',
+          reason: 'Trivial change',
+          suggestedAgents: [], // Empty to trigger default
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.suggestedAgents).toEqual(['frontend']);
+    });
+
+    it('should return ["frontend", "testing"] as default for simple complexity', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, [], '/project');
+
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'simple',
+          reason: 'Simple change',
+          suggestedAgents: [], // Empty to trigger default
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.suggestedAgents).toEqual(['frontend', 'testing']);
+    });
+
+    it('should return 4 agents as default for normal complexity', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, [], '/project');
+
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'normal',
+          reason: 'Normal change',
+          suggestedAgents: [], // Empty to trigger default
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.suggestedAgents).toEqual(['frontend', 'backend', 'testing', 'infrastructure']);
+    });
+
+    it('should return all 6 agents as default for complex complexity', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, [], '/project');
+
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'complex',
+          reason: 'Complex change',
+          suggestedAgents: [], // Empty to trigger default
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.suggestedAgents).toEqual([
+        'frontend',
+        'backend',
+        'database',
+        'testing',
+        'infrastructure',
+        'documentation',
+      ]);
+    });
+  });
+
+  describe('edge cases', () => {
+    it('should handle empty reason field by providing default message', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'simple',
+          reason: '', // Empty reason
+          suggestedAgents: ['frontend'],
+          useLeanPrompts: true,
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      // Empty string is falsy, so it falls through to 'No reason provided'
+      expect(result.reason).toBe('No reason provided');
+    });
+
+    it('should fall back to normal when reason field is missing from JSON', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'simple',
+          // reason missing - regex requires both complexity AND reason
+          suggestedAgents: ['frontend'],
+          useLeanPrompts: true,
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      // Missing reason causes regex to not match, falling back to parse error
+      expect(result.complexity).toBe('normal');
+      expect(result.reason).toContain('parse');
+    });
+
+    it('should handle process killed (exit code -2)', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      mockChildProcess.emit('close', -2);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      expect(result.reason).toContain('failed (code -2)');
+      expect(result.suggestedAgents).toHaveLength(4);
+    });
+
+    it('should handle null exit code', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      mockChildProcess.emit('close', null);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      expect(result.suggestedAgents).toHaveLength(4);
+    });
+
+    it('should accumulate stdout data from multiple chunks', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      // Send response in multiple chunks
+      const fullResponse = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'simple',
+          reason: 'Chunked response',
+          suggestedAgents: ['frontend'],
+          useLeanPrompts: true,
+        }),
+      });
+
+      const chunk1 = fullResponse.slice(0, 20);
+      const chunk2 = fullResponse.slice(20, 50);
+      const chunk3 = fullResponse.slice(50);
+
+      mockChildProcess.stdout!.emit('data', Buffer.from(chunk1));
+      mockChildProcess.stdout!.emit('data', Buffer.from(chunk2));
+      mockChildProcess.stdout!.emit('data', Buffer.from(chunk3));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('simple');
+      expect(result.reason).toBe('Chunked response');
+    });
+
+    it('should handle empty result field', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      const response = JSON.stringify({
+        result: '',
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      expect(result.reason).toContain('parse');
+    });
+
+    it('should handle response with only whitespace in result', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      const response = JSON.stringify({
+        result: '   \n\t  ',
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+    });
+
+    it('should include partial output in result on spawn error', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      // Emit some partial output before error
+      mockChildProcess.stdout!.emit('data', Buffer.from('partial output before error'));
+      mockChildProcess.emit('error', new Error('Connection reset'));
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      expect(result.output).toBe('partial output before error');
+    });
+
+    it('should use provided projectPath for cwd', async () => {
+      const customPath = '/custom/project/path';
+      assessor.assess(mockTitle, mockDescription, mockCriteria, customPath);
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'claude',
+        expect.any(Array),
+        expect.objectContaining({
+          cwd: customPath,
+        })
+      );
+    });
+
+    it('should respect useLeanPrompts when explicitly provided as false', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'trivial', // Would normally infer useLeanPrompts=true
+          reason: 'Trivial but needs full prompts',
+          suggestedAgents: ['frontend'],
+          useLeanPrompts: false, // Explicitly set to false
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.useLeanPrompts).toBe(false);
+    });
+
+    it('should respect useLeanPrompts when explicitly provided as true for complex', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'complex', // Would normally infer useLeanPrompts=false
+          reason: 'Complex but use lean prompts',
+          suggestedAgents: ['frontend', 'backend'],
+          useLeanPrompts: true, // Explicitly set to true
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.useLeanPrompts).toBe(true);
+    });
+
+    it('should filter all invalid agents and use defaults', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'simple',
+          reason: 'Simple change',
+          suggestedAgents: ['invalid1', 'invalid2', 'another_invalid'],
+          useLeanPrompts: true,
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      // Since all agents were invalid, should fall back to simple defaults
+      expect(result.suggestedAgents).toEqual(['frontend', 'testing']);
+    });
+  });
+
+  describe('timeout behavior', () => {
+    it('should include partial output when timeout occurs', async () => {
+      jest.useFakeTimers();
+
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      // Send some partial data before timeout
+      mockChildProcess.stdout!.emit('data', Buffer.from('{"result": "partial'));
+
+      // Advance past timeout
+      jest.advanceTimersByTime(120_001);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      expect(result.output).toBe('{"result": "partial');
+      expect(mockChildProcess.kill).toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('should clear timeout when process completes normally', async () => {
+      jest.useFakeTimers();
+
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'simple',
+          reason: 'Quick assessment',
+          suggestedAgents: ['frontend'],
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      // Now advance time past timeout - should not affect result
+      jest.advanceTimersByTime(120_001);
+
+      expect(result.complexity).toBe('simple');
+      expect(mockChildProcess.kill).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
   });
 });
