@@ -462,7 +462,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         isLoading: false,
       });
 
-      // If a session was promoted, update queued sessions list
+      // Remove the cancelled/backed-out session from queuedSessions
+      set((state) => ({
+        queuedSessions: state.queuedSessions.filter(
+          (s) => s.featureId !== featureId
+        ),
+      }));
+
+      // If a session was promoted, also remove it from queued sessions list
       if (data.promotedSession) {
         set((state) => ({
           queuedSessions: state.queuedSessions.filter(

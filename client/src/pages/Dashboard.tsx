@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { Session, QueueReorderedEvent, ComplexityAssessedEvent } from '@claude-code-web/shared';
 import { useSessionStore } from '../stores/sessionStore';
 import QueuedSessionsList, { ChangeComplexityBadge } from '../components/QueuedSessionsList';
+import CancelQueuedSessionModal from '../components/CancelQueuedSessionModal';
 import { connectToProject, disconnectFromProject, getSocket } from '../services/socket';
 
 type SessionFilter = 'all' | 'active' | 'paused' | 'completed' | 'failed';
@@ -59,6 +60,11 @@ export default function Dashboard() {
   const [filter, setFilter] = useState<SessionFilter>('all');
   const [resumingSessionId, setResumingSessionId] = useState<string | null>(null);
 
+  // Cancel modal state
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [sessionToCancel, setSessionToCancel] = useState<Session | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+
   const navigate = useNavigate();
 
   // Store state for queue management
@@ -68,6 +74,7 @@ export default function Dashboard() {
     isReorderingQueue,
     reorderQueue,
     resumeSession,
+    backoutSession,
     applyComplexityAssessment,
     error: storeError,
     setError: setStoreError,
@@ -228,6 +235,43 @@ export default function Dashboard() {
     [resumeSession, navigate]
   );
 
+  // Handle cancel session button click (opens modal)
+  const handleCancelSession = useCallback((session: Session) => {
+    setSessionToCancel(session);
+    setCancelModalOpen(true);
+  }, []);
+
+  // Handle cancel modal close
+  const handleCancelModalClose = useCallback(() => {
+    if (!isCancelling) {
+      setCancelModalOpen(false);
+      setSessionToCancel(null);
+    }
+  }, [isCancelling]);
+
+  // Handle cancel confirmation
+  const handleCancelConfirm = useCallback(async () => {
+    if (!sessionToCancel) return;
+
+    setIsCancelling(true);
+    try {
+      await backoutSession(
+        sessionToCancel.projectId,
+        sessionToCancel.featureId,
+        'abandon',
+        'user_requested'
+      );
+      // Also update local sessions state to remove the cancelled session
+      setSessions((prev) => prev.filter((s) => s.featureId !== sessionToCancel.featureId));
+      setCancelModalOpen(false);
+      setSessionToCancel(null);
+    } catch {
+      // Error is already set in store
+    } finally {
+      setIsCancelling(false);
+    }
+  }, [sessionToCancel, backoutSession]);
+
   // Clear store error when component unmounts
   useEffect(() => {
     return () => setStoreError(null);
@@ -294,6 +338,7 @@ export default function Dashboard() {
                 onReorder={handleReorder}
                 isReordering={isReorderingQueue}
                 formatRelativeTime={formatRelativeTime}
+                onCancelSession={handleCancelSession}
               />
             </section>
           )}
@@ -470,6 +515,15 @@ export default function Dashboard() {
           </section>
         </>
       )}
+
+      {/* Cancel Queued Session Modal */}
+      <CancelQueuedSessionModal
+        isOpen={cancelModalOpen}
+        onClose={handleCancelModalClose}
+        onConfirm={handleCancelConfirm}
+        sessionTitle={sessionToCancel?.title || ''}
+        isLoading={isCancelling}
+      />
     </div>
   );
 }
