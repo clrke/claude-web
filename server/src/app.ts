@@ -330,6 +330,10 @@ async function spawnStage2Review(
   const sessionDir = `${session.projectId}/${session.featureId}`;
   const statusPath = `${sessionDir}/status.json`;
 
+  // Determine if this is a fresh spawn (no --resume) or a continuation
+  // Fresh spawns increment iteration count; resumed spawns do not
+  const isFreshSpawn = !session.claudeSessionId;
+
   // Update status to running
   const status = await storage.readJson<Record<string, unknown>>(statusPath);
   if (status) {
@@ -372,8 +376,11 @@ async function spawnStage2Review(
     // Apply Haiku fallback if no decisions were parsed but output looks like questions
     const extractedCount = await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
 
-    // Increment review count after Stage 2 completes
-    await resultHandler.incrementReviewCount(sessionDir);
+    // Only increment review count on fresh spawns (not --resume continuations)
+    // This ensures iteration count reflects actual new review cycles, not resumed conversations
+    if (isFreshSpawn) {
+      await resultHandler.incrementReviewCount(sessionDir);
+    }
 
     // Broadcast saving_results before broadcasting parsed data events
     eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage2_started', { stage: 2, subState: 'saving_results' });
@@ -429,7 +436,8 @@ async function spawnStage2Review(
     }
 
     // Check for auto Stage 2→3 transition (pass planValidation for structure check)
-    await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster, planValidation);
+    // Only evaluate iteration logic on fresh spawns - resumed spawns just continue the current iteration
+    await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster, planValidation ?? null, isFreshSpawn);
 
     console.log(`Stage 2 review ${result.isError ? 'failed' : 'completed'} for ${session.featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
   }).catch(async (error) => {
@@ -516,7 +524,8 @@ async function handleStage2Completion(
   sessionManager: SessionManager,
   resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined,
-  planValidation?: PlanCompletenessResult
+  planValidation: PlanCompletenessResult | null,
+  isFreshSpawn: boolean
 ): Promise<void> {
   // Re-fetch current session state to avoid stale data
   const currentSession = await sessionManager.getSession(session.projectId, session.featureId);
@@ -544,31 +553,45 @@ async function handleStage2Completion(
   console.log(`Plan approved via ${approvalMethod} for ${session.featureId}`);
 
   // Check if we should continue plan review iterations
-  // Continue reviewing even when approved if decisions remain (until max iterations or no decisions)
+  // IMPORTANT: Only evaluate iteration logic on fresh spawns (not --resume continuations)
+  // Resumed spawns are part of the SAME iteration - they don't count as new iterations
+  // hasDecisionNeeded should only trigger continuation from fresh spawn output
   const hasDecisionNeeded = result.parsed.decisions.length > 0;
   const reviewCount = plan?.reviewCount || 0;
   const planApproved = stateApproved || markerApproved;
   const nextIteration = reviewCount + 1;
-  const shouldContinue = shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved);
+
+  // Only evaluate shouldContinue on fresh spawns
+  // For resumed spawns, we skip iteration logic and just proceed to Stage 3 transition check
+  const shouldContinue = isFreshSpawn
+    ? shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved)
+    : false; // Resumed spawns don't trigger new iterations
 
   // Structured logging for plan review iteration decision
-  console.log(
-    `[Plan Review] ${session.featureId}: Iteration ${nextIteration}/${MAX_PLAN_REVIEW_ITERATIONS} - ` +
-    `hasDecisionNeeded=${hasDecisionNeeded}, planApproved=${planApproved}, ` +
-    `decision=${shouldContinue ? 'CONTINUE' : 'TRANSITION_TO_STAGE_3'}`
-  );
+  if (isFreshSpawn) {
+    console.log(
+      `[Plan Review] ${session.featureId}: Iteration ${nextIteration}/${MAX_PLAN_REVIEW_ITERATIONS} - ` +
+      `hasDecisionNeeded=${hasDecisionNeeded}, planApproved=${planApproved}, ` +
+      `decision=${shouldContinue ? 'CONTINUE' : 'TRANSITION_TO_STAGE_3'}`
+    );
 
-  // Broadcast iteration progress to frontend
-  eventBroadcaster?.planReviewIteration(
-    session.projectId,
-    session.featureId,
-    nextIteration,
-    MAX_PLAN_REVIEW_ITERATIONS,
-    hasDecisionNeeded,
-    planApproved,
-    shouldContinue ? 'continue' : 'transition_to_stage_3',
-    hasDecisionNeeded ? result.parsed.decisions.length : undefined
-  );
+    // Broadcast iteration progress to frontend (only for fresh spawns)
+    eventBroadcaster?.planReviewIteration(
+      session.projectId,
+      session.featureId,
+      nextIteration,
+      MAX_PLAN_REVIEW_ITERATIONS,
+      hasDecisionNeeded,
+      planApproved,
+      shouldContinue ? 'continue' : 'transition_to_stage_3',
+      hasDecisionNeeded ? result.parsed.decisions.length : undefined
+    );
+  } else {
+    console.log(
+      `[Plan Review] ${session.featureId}: Resumed spawn completed (iteration ${reviewCount}/${MAX_PLAN_REVIEW_ITERATIONS}) - ` +
+      `hasDecisionNeeded=${hasDecisionNeeded}, planApproved=${planApproved}, skipping iteration logic`
+    );
+  }
 
   if (shouldContinue) {
     console.log(`Continuing plan review iteration ${nextIteration}/${MAX_PLAN_REVIEW_ITERATIONS} for ${session.featureId} (${result.parsed.decisions.length} decisions pending)`);
@@ -3089,6 +3112,9 @@ Please pay special attention to the above areas during your review.`;
             // Broadcast execution started
             eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'batch_answers_resume', { stage: session.currentStage, subState: 'spawning_agent' });
 
+            // Determine if this is a fresh spawn or resume
+            const isFreshSpawn = !session.claudeSessionId;
+
             // Resume Claude with the batch answers
             const result = await orchestrator.spawn({
               prompt,
@@ -3108,8 +3134,11 @@ Please pay special attention to the above areas during your review.`;
                 await handleStage1Completion(session, result, storage, sessionManager, resultHandler, eventBroadcaster);
               }
             } else if (session.currentStage === 2) {
-              const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
-              await resultHandler.incrementReviewCount(sessionDir);
+              const { allFiltered, planValidation } = await resultHandler.handleStage2Result(session, result, prompt);
+              // Only increment review count on fresh spawns
+              if (isFreshSpawn) {
+                await resultHandler.incrementReviewCount(sessionDir);
+              }
               // If all questions were filtered, re-spawn Stage 2 with validation context
               if (allFiltered && result.parsed.decisions.length > 0 && !result.parsed.planApproved) {
                 console.log(`All ${result.parsed.decisions.length} question(s) filtered - re-spawning Stage 2 with validation context for ${featureId}`);
@@ -3124,7 +3153,7 @@ Please pay special attention to the above areas during your review.`;
                 return;
               }
               // Check for Stage 2→3 auto-transition
-              await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
+              await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster, planValidation ?? null, isFreshSpawn);
             }
 
             // Apply Haiku fallback if no decisions were parsed but output looks like questions
@@ -3366,6 +3395,9 @@ After creating all steps, write the plan to a file and output:
           // Save "started" conversation entry
           await resultHandler.saveConversationStart(sessionDir, session.currentStage, prompt);
 
+          // Determine if this is a fresh spawn or resume
+          const isFreshSpawn = !session.claudeSessionId;
+
           // Resume Claude with the batch answers
           const result = await orchestrator.spawn({
             prompt,
@@ -3384,8 +3416,11 @@ After creating all steps, write the plan to a file and output:
               await handleStage1Completion(session, result, storage, sessionManager, resultHandler, eventBroadcaster);
             }
           } else if (session.currentStage === 2) {
-            const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
-            await resultHandler.incrementReviewCount(sessionDir);
+            const { allFiltered, planValidation } = await resultHandler.handleStage2Result(session, result, prompt);
+            // Only increment review count on fresh spawns
+            if (isFreshSpawn) {
+              await resultHandler.incrementReviewCount(sessionDir);
+            }
             // If all questions were filtered, re-spawn Stage 2 with validation context
             if (allFiltered && result.parsed.decisions.length > 0 && !result.parsed.planApproved) {
               console.log(`All ${result.parsed.decisions.length} question(s) filtered - re-spawning Stage 2 with validation context for ${featureId}`);
@@ -3399,7 +3434,7 @@ After creating all steps, write the plan to a file and output:
               await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, continuePrompt);
               return;
             }
-            await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
+            await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster, planValidation ?? null, isFreshSpawn);
           } else if (session.currentStage === 3) {
             // Stage 3: Resume step-by-step execution after blocker answer
             // Get the blocked step from status.json or from the answered question's stepId
@@ -3709,6 +3744,9 @@ After creating all steps, write the plan to a file and output:
       // Save "started" conversation entry
       await resultHandler.saveConversationStart(sessionDir, 2, prompt);
 
+      // Determine if this is a fresh spawn or resume
+      const isFreshSpawn = !session.claudeSessionId;
+
       // Spawn Claude to revise the plan
       orchestrator.spawn({
         prompt,
@@ -3719,10 +3757,12 @@ After creating all steps, write the plan to a file and output:
           eventBroadcaster?.claudeOutput(projectId, featureId, output, isComplete);
         },
       }).then(async (result) => {
-        const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
+        const { allFiltered, planValidation } = await resultHandler.handleStage2Result(session, result, prompt);
 
-        // Increment review count
-        await resultHandler.incrementReviewCount(sessionDir);
+        // Only increment review count on fresh spawns
+        if (isFreshSpawn) {
+          await resultHandler.incrementReviewCount(sessionDir);
+        }
 
         // Broadcast events
         if (eventBroadcaster) {
@@ -3767,7 +3807,7 @@ After creating all steps, write the plan to a file and output:
         }
 
         // Check for auto Stage 2→3 transition if plan was approved after revision
-        await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
+        await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster, planValidation ?? null, isFreshSpawn);
 
         console.log(`Plan revision ${result.isError ? 'failed' : 'completed'} for ${featureId}`);
       }).catch(async (error) => {
