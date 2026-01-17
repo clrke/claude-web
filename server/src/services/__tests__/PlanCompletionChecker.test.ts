@@ -865,6 +865,62 @@ describe('PlanCompletionChecker - Storage Layer Integration', () => {
     expect(result.validationResult).toBeDefined();
   });
 
+  it('legacy plan conversion reads from separate JSON files', async () => {
+    // Create legacy plan.json (without embedded testCoverage, dependencies, acceptanceMapping)
+    const legacyPlan = {
+      sessionId: 'legacy-with-separate-files',
+      steps: [createValidStep('step-1')],
+      isApproved: false,
+      createdAt: '2024-01-15T10:00:00Z',
+    };
+    const planPath = path.join(tempDir, 'plan.json');
+    await fs.promises.writeFile(planPath, JSON.stringify(legacyPlan));
+
+    // Create separate test-coverage.json with valid data
+    await fs.promises.writeFile(
+      path.join(tempDir, 'test-coverage.json'),
+      JSON.stringify({
+        framework: 'vitest',
+        requiredTestTypes: ['unit', 'integration'],
+        stepCoverage: [{ stepId: 'step-1', requiredTestTypes: ['unit'] }],
+      })
+    );
+
+    // Create separate dependencies.json
+    await fs.promises.writeFile(
+      path.join(tempDir, 'dependencies.json'),
+      JSON.stringify({
+        stepDependencies: [],
+        externalDependencies: [],
+      })
+    );
+
+    // Create separate acceptance-mapping.json
+    await fs.promises.writeFile(
+      path.join(tempDir, 'acceptance-mapping.json'),
+      JSON.stringify({
+        mappings: [{
+          criterionId: 'ac-1',
+          criterionText: 'Feature works',
+          implementingStepIds: ['step-1'],
+          isFullyCovered: true,
+        }],
+        updatedAt: '2024-01-15T10:00:00Z',
+      })
+    );
+
+    const result = await checker.checkPlanCompleteness(tempDir);
+
+    // Steps should be valid
+    expect(result.validationResult.steps.valid).toBe(true);
+    // Test coverage should be valid because it was read from separate file
+    expect(result.validationResult.testCoverage.valid).toBe(true);
+    // Dependencies should be valid
+    expect(result.validationResult.dependencies.valid).toBe(true);
+    // Acceptance mapping should be valid
+    expect(result.validationResult.acceptanceMapping.valid).toBe(true);
+  });
+
   it('reads multiple step files from steps/ directory', async () => {
     const planDir = path.join(tempDir, 'plan');
     const stepsDir = path.join(planDir, 'steps');

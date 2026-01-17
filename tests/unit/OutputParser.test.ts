@@ -719,6 +719,49 @@ coverage_target: 90
       const result = parser.parsePlanTestCoverage('No test coverage here');
       expect(result).toBeNull();
     });
+
+    it('should strip brackets from requiredTestTypes array format', () => {
+      const input = `
+[PLAN_TEST_COVERAGE]
+framework: vitest
+requiredTestTypes: [unit, integration, e2e]
+globalCoverageTarget: 80
+[/PLAN_TEST_COVERAGE]
+`;
+      const result = parser.parsePlanTestCoverage(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.requiredTestTypes).toEqual(['unit', 'integration', 'e2e']);
+      // Ensure no brackets in the values
+      expect(result!.requiredTestTypes[0]).not.toContain('[');
+      expect(result!.requiredTestTypes[2]).not.toContain(']');
+    });
+
+    it('should handle requiredTestTypes without brackets', () => {
+      const input = `
+[PLAN_TEST_COVERAGE]
+framework: jest
+requiredTestTypes: unit, integration
+[/PLAN_TEST_COVERAGE]
+`;
+      const result = parser.parsePlanTestCoverage(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.requiredTestTypes).toEqual(['unit', 'integration']);
+    });
+
+    it('should handle single test type in brackets', () => {
+      const input = `
+[PLAN_TEST_COVERAGE]
+framework: pytest
+requiredTestTypes: [unit]
+[/PLAN_TEST_COVERAGE]
+`;
+      const result = parser.parsePlanTestCoverage(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.requiredTestTypes).toEqual(['unit']);
+    });
   });
 
   describe('parsePlanAcceptanceMapping', () => {

@@ -220,7 +220,7 @@ export class PlanCompletionChecker {
 
         // If it's an old format with steps array, convert it
         if (Array.isArray(plan.steps)) {
-          return this.convertLegacyPlan(plan, sessionDir);
+          return await this.convertLegacyPlan(plan, sessionDir);
         }
       } catch {
         // Failed to read or parse plan.json
@@ -248,9 +248,76 @@ export class PlanCompletionChecker {
 
   /**
    * Convert a legacy plan format to composable plan structure.
+   * Reads from separate JSON files (test-coverage.json, dependencies.json, acceptance-mapping.json)
+   * if they exist in the session directory.
    */
-  private convertLegacyPlan(legacyPlan: Record<string, unknown>, sessionDir: string): ComposablePlan {
+  private async convertLegacyPlan(legacyPlan: Record<string, unknown>, sessionDir: string): Promise<ComposablePlan> {
     const steps = Array.isArray(legacyPlan.steps) ? legacyPlan.steps as PlanStep[] : [];
+
+    // Read from separate JSON files if they exist
+    const testCoveragePath = path.join(sessionDir, 'test-coverage.json');
+    const dependenciesPath = path.join(sessionDir, 'dependencies.json');
+    const acceptancePath = path.join(sessionDir, 'acceptance-mapping.json');
+
+    let testCoverage: ComposablePlan['testCoverage'] = {
+      framework: 'unknown',
+      requiredTestTypes: [],
+      stepCoverage: [],
+    };
+
+    let dependencies: ComposablePlan['dependencies'] = {
+      stepDependencies: [],
+      externalDependencies: [],
+    };
+
+    let acceptanceMapping: ComposablePlan['acceptanceMapping'] = {
+      mappings: [],
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Read test coverage from separate file
+    if (fs.existsSync(testCoveragePath)) {
+      try {
+        const content = await fs.promises.readFile(testCoveragePath, 'utf-8');
+        const parsed = JSON.parse(content);
+        testCoverage = {
+          framework: parsed.framework || 'unknown',
+          requiredTestTypes: Array.isArray(parsed.requiredTestTypes) ? parsed.requiredTestTypes : [],
+          stepCoverage: Array.isArray(parsed.stepCoverage) ? parsed.stepCoverage : [],
+          globalCoverageTarget: parsed.globalCoverageTarget,
+        };
+      } catch {
+        // Keep defaults on error
+      }
+    }
+
+    // Read dependencies from separate file
+    if (fs.existsSync(dependenciesPath)) {
+      try {
+        const content = await fs.promises.readFile(dependenciesPath, 'utf-8');
+        const parsed = JSON.parse(content);
+        dependencies = {
+          stepDependencies: Array.isArray(parsed.stepDependencies) ? parsed.stepDependencies : [],
+          externalDependencies: Array.isArray(parsed.externalDependencies) ? parsed.externalDependencies : [],
+        };
+      } catch {
+        // Keep defaults on error
+      }
+    }
+
+    // Read acceptance mapping from separate file
+    if (fs.existsSync(acceptancePath)) {
+      try {
+        const content = await fs.promises.readFile(acceptancePath, 'utf-8');
+        const parsed = JSON.parse(content);
+        acceptanceMapping = {
+          mappings: Array.isArray(parsed.mappings) ? parsed.mappings : [],
+          updatedAt: parsed.updatedAt || new Date().toISOString(),
+        };
+      } catch {
+        // Keep defaults on error
+      }
+    }
 
     return {
       meta: {
@@ -262,19 +329,9 @@ export class PlanCompletionChecker {
         reviewCount: (legacyPlan.reviewCount as number) || 0,
       },
       steps,
-      dependencies: {
-        stepDependencies: [],
-        externalDependencies: [],
-      },
-      testCoverage: {
-        framework: 'unknown',
-        requiredTestTypes: [],
-        stepCoverage: [],
-      },
-      acceptanceMapping: {
-        mappings: [],
-        updatedAt: new Date().toISOString(),
-      },
+      dependencies,
+      testCoverage,
+      acceptanceMapping,
       validationStatus: {
         meta: false,
         steps: false,
