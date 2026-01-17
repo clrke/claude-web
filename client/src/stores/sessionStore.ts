@@ -21,7 +21,6 @@ export interface ConversationEntry {
     | 'test_assessment'
     | 'incomplete_steps'
     | 'question_extraction'
-    | 'plan_step_extraction'
     | 'pr_info_extraction'
     | 'implementation_status_extraction'
     | 'test_results_extraction'

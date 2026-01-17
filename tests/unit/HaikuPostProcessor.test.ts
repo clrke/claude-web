@@ -74,44 +74,6 @@ How should we handle authentication?
     });
   });
 
-  describe('extractPlanSteps', () => {
-    it('should extract plan steps from prose', async () => {
-      const output = `[PLAN_STEP id="step-1" parent="null" status="pending"]
-Create feature branch
-Create and checkout feature branch from main
-[/PLAN_STEP]
-
-[PLAN_STEP id="step-2" parent="step-1" status="pending"]
-Implement authentication
-Add JWT token handling to the API
-[/PLAN_STEP]`;
-
-      mockSpawn.mockReturnValueOnce(createMockProcess(output) as any);
-
-      const result = await postProcessor.extractPlanSteps(
-        'First, create a feature branch. Then implement authentication. This should be long enough.',
-        '/test/project'
-      );
-
-      expect(result).not.toBeNull();
-      expect(result?.data).toHaveLength(2);
-      expect(result?.data[0].id).toBe('step-1');
-      expect(result?.data[0].title).toBe('Create feature branch');
-      expect(result?.data[1].parentId).toBe('step-1');
-    });
-
-    it('should return null for [NO_STEPS] response', async () => {
-      mockSpawn.mockReturnValueOnce(createMockProcess('[NO_STEPS]') as any);
-
-      const result = await postProcessor.extractPlanSteps(
-        'This output has no implementation steps but is long enough to process',
-        '/test/project'
-      );
-
-      expect(result).toBeNull();
-    });
-  });
-
   describe('extractPRInfo', () => {
     it('should extract PR information from description', async () => {
       // OutputParser expects "Branch: source → target" format
@@ -335,7 +297,6 @@ What database should we use?
         {
           stage: 1,
           hasDecisions: false,
-          hasPlanSteps: true, // Already has plan steps, so won't extract them
           hasImplementationStatus: false,
           hasPRCreated: false,
         }
@@ -345,33 +306,6 @@ What database should we use?
       expect(result.questions).toHaveLength(1);
       expect(result.postProcessResults).toHaveLength(1);
       expect(result.postProcessResults[0].type).toBe('question_extraction');
-    });
-
-    it('should extract plan steps for Stage 1 without plan steps', async () => {
-      const stepsOutput = `[PLAN_STEP id="step-1" parent="null" status="pending"]
-Setup project
-Initialize project structure
-[/PLAN_STEP]`;
-
-      // First call for questions returns none
-      mockSpawn.mockReturnValueOnce(createMockProcess('[NO_QUESTIONS]') as any);
-      // Second call for plan steps returns steps
-      mockSpawn.mockReturnValueOnce(createMockProcess(stepsOutput) as any);
-
-      const result = await postProcessor.smartExtract(
-        'First we need to setup the project, then implement features. This should be long enough to process.',
-        '/test/project',
-        {
-          stage: 1,
-          hasDecisions: false,
-          hasPlanSteps: false,
-          hasImplementationStatus: false,
-          hasPRCreated: false,
-        }
-      );
-
-      expect(result.planSteps).toBeDefined();
-      expect(result.planSteps).toHaveLength(1);
     });
 
     it('should extract implementation status for Stage 3', async () => {
@@ -393,7 +327,6 @@ message: Step completed successfully
         {
           stage: 3,
           hasDecisions: false,
-          hasPlanSteps: false,
           hasImplementationStatus: false,
           hasPRCreated: false,
         }
@@ -417,7 +350,6 @@ Branch: feature/auth → main
         {
           stage: 4,
           hasDecisions: false,
-          hasPlanSteps: false,
           hasImplementationStatus: false,
           hasPRCreated: false,
         }
@@ -444,7 +376,6 @@ How should we address this?
         {
           stage: 5,
           hasDecisions: false,
-          hasPlanSteps: false,
           hasImplementationStatus: false,
           hasPRCreated: false,
         }
@@ -462,7 +393,6 @@ How should we address this?
         {
           stage: 1,
           hasDecisions: true, // Already has decisions
-          hasPlanSteps: true,
           hasImplementationStatus: false,
           hasPRCreated: false,
         }

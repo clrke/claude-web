@@ -51,7 +51,6 @@ const POST_PROCESSING_LABELS: Record<string, string> = {
   test_assessment: 'Test Assessment',
   incomplete_steps: 'Step Assessment',
   question_extraction: 'Question Extraction',
-  plan_step_extraction: 'Plan Extraction',
   pr_info_extraction: 'PR Extraction',
   implementation_status_extraction: 'Status Extraction',
   test_results_extraction: 'Test Extraction',

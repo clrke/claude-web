@@ -115,7 +115,6 @@ async function applyHaikuPostProcessing(
 
   // Check what's already in the parsed output
   const hasDecisions = result.parsed.decisions.length > 0;
-  const hasPlanSteps = result.parsed.planSteps.length > 0;
   const hasImplementationStatus = result.parsed.implementationStatus !== null;
   const hasPRCreated = result.parsed.prCreated !== null;
 
@@ -123,7 +122,7 @@ async function applyHaikuPostProcessing(
   if (hasActionableContent(result.parsed)) {
     // Still try to extract additional content if some types are missing
     const shouldExtract = (
-      (session.currentStage === 1 && (!hasDecisions || !hasPlanSteps)) ||
+      (session.currentStage === 1 && !hasDecisions) ||
       (session.currentStage === 2 && !hasDecisions) ||
       (session.currentStage === 3 && !hasImplementationStatus) ||
       (session.currentStage === 4 && !hasPRCreated) ||
@@ -142,7 +141,6 @@ async function applyHaikuPostProcessing(
     {
       stage: session.currentStage,
       hasDecisions,
-      hasPlanSteps,
       hasImplementationStatus,
       hasPRCreated,
     }
@@ -158,13 +156,6 @@ async function applyHaikuPostProcessing(
     await resultHandler['saveQuestions'](sessionDir, session, extractionResult.questions, plan);
     totalExtracted += extractionResult.questions.length;
     console.log(`Haiku extracted ${extractionResult.questions.length} questions for ${session.featureId}`);
-  }
-
-  // Merge extracted plan steps into result
-  if (extractionResult.planSteps && extractionResult.planSteps.length > 0) {
-    result.parsed.planSteps = extractionResult.planSteps;
-    totalExtracted += extractionResult.planSteps.length;
-    console.log(`Haiku extracted ${extractionResult.planSteps.length} plan steps for ${session.featureId}`);
   }
 
   // Merge extracted PR info into result
@@ -1114,7 +1105,6 @@ async function executeSingleStep(
             {
               stage: 3,
               hasDecisions: result.parsed.decisions.length > 0,
-              hasPlanSteps: false,
               hasImplementationStatus: result.parsed.implementationStatus !== null,
               hasPRCreated: false,
             }

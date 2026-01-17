@@ -9,7 +9,6 @@ export type PostProcessingType =
   | 'test_assessment'
   | 'incomplete_steps'
   | 'question_extraction'
-  | 'plan_step_extraction'
   | 'pr_info_extraction'
   | 'implementation_status_extraction'
   | 'test_results_extraction'
@@ -45,26 +44,6 @@ The question text here?
 [/DECISION_NEEDED]
 
 If no questions are found that need user decisions, output exactly: [NO_QUESTIONS]
-
-Text to analyze:
-`;
-
-const PLAN_STEP_EXTRACTION_PROMPT = `You are a formatting assistant. Extract implementation plan steps from the following text and format them using the [PLAN_STEP] marker format.
-
-Rules:
-1. Extract concrete, actionable implementation steps
-2. Assign sequential IDs (step-1, step-2, etc.)
-3. Set parentId to the previous step's ID for sequential dependencies, or null for independent steps
-4. Include descriptive titles and detailed descriptions
-5. All steps start with status="pending"
-
-Output format for EACH step found:
-[PLAN_STEP id="step-1" parent="null" status="pending"]
-Step title here
-Detailed description of what needs to be done, including specific files, functions, or components to modify.
-[/PLAN_STEP]
-
-If no plan steps are found, output exactly: [NO_STEPS]
 
 Text to analyze:
 `;
@@ -293,33 +272,6 @@ export class HaikuPostProcessor {
   }
 
   /**
-   * Extract plan steps from prose descriptions
-   */
-  async extractPlanSteps(output: string, cwd: string): Promise<PostProcessResult<ParsedPlanStep[]> | null> {
-    if (output.length < MIN_OUTPUT_LENGTH) return null;
-
-    const prompt = PLAN_STEP_EXTRACTION_PROMPT + output;
-    const result = await this.runHaiku(prompt, cwd);
-
-    if (!result || result.output.includes('[NO_STEPS]')) {
-      return null;
-    }
-
-    const parsed = this.outputParser.parse(result.output);
-    if (parsed.planSteps.length === 0) {
-      return null;
-    }
-
-    console.log(`Haiku extracted ${parsed.planSteps.length} plan steps`);
-    return {
-      data: parsed.planSteps,
-      prompt,
-      output: result.output,
-      durationMs: result.durationMs,
-    };
-  }
-
-  /**
    * Extract PR information from descriptions
    */
   async extractPRInfo(output: string, cwd: string): Promise<PostProcessResult<ParsedPRCreated> | null> {
@@ -521,13 +473,11 @@ export class HaikuPostProcessor {
     context: {
       stage: number;
       hasDecisions: boolean;
-      hasPlanSteps: boolean;
       hasImplementationStatus: boolean;
       hasPRCreated: boolean;
     }
   ): Promise<{
     questions?: ParsedDecision[];
-    planSteps?: ParsedPlanStep[];
     prInfo?: ParsedPRCreated;
     implementationStatus?: ParsedImplementationStatus;
     reviewFindings?: ParsedDecision[];
@@ -535,7 +485,6 @@ export class HaikuPostProcessor {
   }> {
     const results: {
       questions?: ParsedDecision[];
-      planSteps?: ParsedPlanStep[];
       prInfo?: ParsedPRCreated;
       implementationStatus?: ParsedImplementationStatus;
       reviewFindings?: ParsedDecision[];
@@ -544,7 +493,7 @@ export class HaikuPostProcessor {
       postProcessResults: [],
     };
 
-    // Stage 1 & 2: Look for questions and plan steps
+    // Stage 1 & 2: Look for questions
     if ((context.stage === 1 || context.stage === 2) && !context.hasDecisions) {
       const questionsResult = await this.extractQuestions(output, cwd);
       if (questionsResult) {
@@ -554,20 +503,6 @@ export class HaikuPostProcessor {
           prompt: questionsResult.prompt,
           output: questionsResult.output,
           durationMs: questionsResult.durationMs,
-        });
-      }
-    }
-
-    // Stage 1: Look for plan steps
-    if (context.stage === 1 && !context.hasPlanSteps) {
-      const stepsResult = await this.extractPlanSteps(output, cwd);
-      if (stepsResult) {
-        results.planSteps = stepsResult.data;
-        results.postProcessResults.push({
-          type: 'plan_step_extraction',
-          prompt: stepsResult.prompt,
-          output: stepsResult.output,
-          durationMs: stepsResult.durationMs,
         });
       }
     }
