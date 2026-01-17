@@ -204,6 +204,40 @@ describe('ComplexityAssessor', () => {
       expect(result.reason).toContain('parse');
     });
 
+    it('should handle malformed inner JSON in result field (step-15 edge case)', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      // Outer JSON parses, but inner result contains truncated/malformed JSON
+      const response = JSON.stringify({
+        result: '{"complexity": "simple", "reason": "test',  // Missing closing brace and quote
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      expect(result.reason).toContain('parse');
+    });
+
+    it('should handle result field with complexity but malformed suggestedAgents (step-15 edge case)', async () => {
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      // Inner JSON has complexity/reason but suggestedAgents is malformed
+      const response = JSON.stringify({
+        result: '{"complexity": "simple", "reason": "test reason", "suggestedAgents": "not-an-array"}',
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      // Should still parse complexity but use default agents
+      expect(result.complexity).toBe('simple');
+      expect(result.reason).toBe('test reason');
+      expect(result.suggestedAgents).toEqual(['frontend', 'testing']); // Default for simple
+    });
+
     it('should spawn claude with correct arguments', async () => {
       assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
 
