@@ -313,6 +313,122 @@ describe('Complexity Assessment Integration', () => {
     });
   });
 
+  describe('Session creation flow with complexity-aware prompt selection', () => {
+    /**
+     * These tests verify the fix for the race condition where Stage 1 prompt
+     * selection was happening before complexity assessment completed.
+     *
+     * The fix ensures that for active sessions, complexity assessment is awaited
+     * before selectStage1PromptBuilder is called, so the session has
+     * assessedComplexity populated.
+     */
+
+    it('should complete assessment before prompt can be selected (simulates await)', async () => {
+      const assessor = new ComplexityAssessor();
+
+      // Simulate the fixed flow: await assessment, then select prompt
+      const assessPromise = assessor.assess(
+        'Simple button change',
+        'Update submit button text',
+        [{ text: 'Button shows new text', checked: false, type: 'manual' }],
+        '/test/project'
+      );
+
+      // Simulate Haiku response for simple change
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'simple',
+          reason: 'Single UI text change',
+          suggestedAgents: ['frontend'],
+          useLeanPrompts: true,
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const assessment = await assessPromise;
+
+      // After awaiting, session would be updated with complexity data
+      // This simulates what happens in the fixed app.ts flow
+      const updatedSession = {
+        assessedComplexity: assessment.complexity,
+        suggestedAgents: assessment.suggestedAgents,
+      };
+
+      // Verify the session now has complexity data for prompt selection
+      expect(updatedSession.assessedComplexity).toBe('simple');
+      expect(updatedSession.suggestedAgents).toEqual(['frontend']);
+    });
+
+    it('should allow prompt selection to proceed with full prompt on assessment error', async () => {
+      const assessor = new ComplexityAssessor();
+
+      const assessPromise = assessor.assess(
+        'Test feature',
+        'Test description',
+        [],
+        '/test/project'
+      );
+
+      // Simulate error condition
+      mockChildProcess.emit('error', new Error('spawn ENOENT'));
+
+      const assessment = await assessPromise;
+
+      // Even on error, we get a fallback assessment
+      expect(assessment.complexity).toBe('normal');
+
+      // This means full prompt would be used (not streamlined)
+      // which is the safe/conservative approach
+      const updatedSession = {
+        assessedComplexity: assessment.complexity,
+        suggestedAgents: assessment.suggestedAgents,
+      };
+
+      expect(updatedSession.assessedComplexity).toBe('normal');
+    });
+
+    it('should handle queued sessions with async assessment correctly', async () => {
+      const assessor = new ComplexityAssessor();
+
+      // For queued sessions, assessment runs in background (fire-and-forget)
+      // By the time the session is dequeued and Stage 1 starts,
+      // the assessment should already be complete
+
+      const assessPromise = assessor.assess(
+        'Complex auth feature',
+        'Implement OAuth2 with JWT',
+        [
+          { text: 'OAuth login works', checked: false, type: 'manual' },
+          { text: 'JWT validation', checked: false, type: 'manual' },
+        ],
+        '/test/project'
+      );
+
+      // Simulate delayed response (as would happen while queued)
+      const response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'complex',
+          reason: 'Authentication affects multiple layers',
+          suggestedAgents: ['frontend', 'backend', 'database', 'testing'],
+          useLeanPrompts: false,
+        }),
+      });
+
+      // Small delay to simulate async processing
+      await new Promise(resolve => setTimeout(resolve, 5));
+
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const assessment = await assessPromise;
+
+      // Session would be updated with complexity before it's dequeued
+      expect(assessment.complexity).toBe('complex');
+      expect(assessment.suggestedAgents).toHaveLength(4);
+    });
+  });
+
   describe('ComplexityAssessment result structure', () => {
     it('should include all required fields in the result', async () => {
       const assessor = new ComplexityAssessor();

@@ -2469,47 +2469,40 @@ export function createApp(
       // Return response immediately
       res.status(201).json(session);
 
-      // Run complexity assessment asynchronously (fire and forget)
-      // This runs in parallel with Stage 1 or while queued
-      complexityAssessor.assess(
-        session.title,
-        session.featureDescription,
-        session.acceptanceCriteria,
-        session.projectPath
-      ).then(async (assessment) => {
-        try {
-          // Update session with complexity results
-          await sessionManager.updateSession(session.projectId, session.featureId, {
-            assessedComplexity: assessment.complexity,
-            complexityReason: assessment.reason,
-            suggestedAgents: assessment.suggestedAgents,
-            complexityAssessedAt: new Date().toISOString(),
-          });
-
-          // Broadcast complexity assessed event
-          eventBroadcaster?.complexityAssessed(
-            session.projectId,
-            session.featureId,
-            session.id,
-            assessment.complexity,
-            assessment.reason,
-            assessment.suggestedAgents,
-            assessment.useLeanPrompts,
-            assessment.durationMs
-          );
-
-          console.log(`Complexity assessed for ${session.featureId}: ${assessment.complexity} (${assessment.durationMs}ms)`);
-        } catch (updateError) {
-          // Session update failed (possibly deleted or edited) - non-critical
-          console.log(`Complexity update skipped for ${session.featureId}: ${updateError instanceof Error ? updateError.message : 'unknown error'}`);
-        }
-      }).catch((error) => {
-        console.error(`Complexity assessment error for ${session.featureId}:`, error);
-        // Non-critical: session continues without complexity info
-      });
-
-      // If session is queued, don't start Stage 1 - it will start when the active session completes
+      // If session is queued, don't start Stage 1 - run complexity assessment in background
       if (session.status === 'queued') {
+        // Run complexity assessment asynchronously for queued sessions
+        complexityAssessor.assess(
+          session.title,
+          session.featureDescription,
+          session.acceptanceCriteria,
+          session.projectPath
+        ).then(async (assessment) => {
+          try {
+            await sessionManager.updateSession(session.projectId, session.featureId, {
+              assessedComplexity: assessment.complexity,
+              complexityReason: assessment.reason,
+              suggestedAgents: assessment.suggestedAgents,
+              complexityAssessedAt: new Date().toISOString(),
+            });
+            eventBroadcaster?.complexityAssessed(
+              session.projectId,
+              session.featureId,
+              session.id,
+              assessment.complexity,
+              assessment.reason,
+              assessment.suggestedAgents,
+              assessment.useLeanPrompts,
+              assessment.durationMs
+            );
+            console.log(`Complexity assessed for queued ${session.featureId}: ${assessment.complexity} (${assessment.durationMs}ms)`);
+          } catch (updateError) {
+            console.log(`Complexity update skipped for ${session.featureId}: ${updateError instanceof Error ? updateError.message : 'unknown error'}`);
+          }
+        }).catch((error) => {
+          console.error(`Complexity assessment error for ${session.featureId}:`, error);
+        });
+
         console.log(`Session ${session.featureId} queued (position ${session.queuePosition}) - waiting for active session to complete`);
         eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'session_queued', {
           stage: 0,
@@ -2518,9 +2511,46 @@ export function createApp(
         return;
       }
 
+      // For active sessions, await complexity assessment before starting Stage 1
+      // This ensures we select the correct prompt (streamlined vs full) based on complexity
+      let assessedSession = session;
+      try {
+        const assessment = await complexityAssessor.assess(
+          session.title,
+          session.featureDescription,
+          session.acceptanceCriteria,
+          session.projectPath
+        );
+
+        // Update session with complexity results
+        assessedSession = await sessionManager.updateSession(session.projectId, session.featureId, {
+          assessedComplexity: assessment.complexity,
+          complexityReason: assessment.reason,
+          suggestedAgents: assessment.suggestedAgents,
+          complexityAssessedAt: new Date().toISOString(),
+        });
+
+        // Broadcast complexity assessed event
+        eventBroadcaster?.complexityAssessed(
+          session.projectId,
+          session.featureId,
+          session.id,
+          assessment.complexity,
+          assessment.reason,
+          assessment.suggestedAgents,
+          assessment.useLeanPrompts,
+          assessment.durationMs
+        );
+
+        console.log(`Complexity assessed for ${session.featureId}: ${assessment.complexity} (${assessment.durationMs}ms)`);
+      } catch (error) {
+        console.error(`Complexity assessment error for ${session.featureId}:`, error);
+        // Continue with unassessed session - will use full prompt
+      }
+
       // Start Stage 1 Discovery asynchronously
       // Select prompt based on complexity assessment (streamlined for simple, full for complex)
-      const prompt = selectStage1PromptBuilder(session);
+      const prompt = selectStage1PromptBuilder(assessedSession);
       const statusPath = `${session.projectId}/${session.featureId}/status.json`;
 
       // Update status to running
