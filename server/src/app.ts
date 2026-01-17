@@ -13,6 +13,7 @@ import { ClaudeResultHandler, StepModificationValidationError } from './services
 import { planCompletionChecker, PlanCompletenessResult } from './services/PlanCompletionChecker';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
+import { ComplexityAssessor } from './services/ComplexityAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
 import { withLock, SpawnLockError } from './services/SpawnLock';
 import {
@@ -2219,6 +2220,8 @@ export function createApp(
   // const decisionValidator = new DecisionValidator();
   // Create test requirement assessor to determine if tests are needed
   const testAssessor = new TestRequirementAssessor();
+  // Create complexity assessor to classify feature request complexity before queueing
+  const complexityAssessor = new ComplexityAssessor();
   const resultHandler = new ClaudeResultHandler(storage, sessionManager, undefined);
 
   // Middleware
@@ -2362,6 +2365,45 @@ export function createApp(
 
       // Return response immediately
       res.status(201).json(session);
+
+      // Run complexity assessment asynchronously (fire and forget)
+      // This runs in parallel with Stage 1 or while queued
+      complexityAssessor.assess(
+        session.title,
+        session.featureDescription,
+        session.acceptanceCriteria,
+        session.projectPath
+      ).then(async (assessment) => {
+        try {
+          // Update session with complexity results
+          await sessionManager.updateSession(session.projectId, session.featureId, {
+            assessedComplexity: assessment.complexity,
+            complexityReason: assessment.reason,
+            suggestedAgents: assessment.suggestedAgents,
+            complexityAssessedAt: new Date().toISOString(),
+          });
+
+          // Broadcast complexity assessed event
+          eventBroadcaster?.complexityAssessed(
+            session.projectId,
+            session.featureId,
+            session.id,
+            assessment.complexity,
+            assessment.reason,
+            assessment.suggestedAgents,
+            assessment.useLeanPrompts,
+            assessment.durationMs
+          );
+
+          console.log(`Complexity assessed for ${session.featureId}: ${assessment.complexity} (${assessment.durationMs}ms)`);
+        } catch (updateError) {
+          // Session update failed (possibly deleted or edited) - non-critical
+          console.log(`Complexity update skipped for ${session.featureId}: ${updateError instanceof Error ? updateError.message : 'unknown error'}`);
+        }
+      }).catch((error) => {
+        console.error(`Complexity assessment error for ${session.featureId}:`, error);
+        // Non-critical: session continues without complexity info
+      });
 
       // If session is queued, don't start Stage 1 - it will start when the active session completes
       if (session.status === 'queued') {
@@ -2511,19 +2553,25 @@ export function createApp(
       const { dataVersion, ...updates } = req.body;
 
       const result = await sessionManager.editQueuedSession(projectId, featureId, dataVersion, updates);
+      const session = result.session;
 
       // Broadcast sessionUpdated event for real-time sync
       if (eventBroadcaster) {
         eventBroadcaster.sessionUpdated(
           projectId,
           featureId,
-          result.session.id,
+          session.id,
           updates,
-          result.session.dataVersion
+          session.dataVersion
         );
       }
 
-      res.json(result.session);
+      // Note: We intentionally do NOT re-assess complexity on edits because:
+      // 1. The async complexity assessment can cause race conditions with concurrent edits
+      // 2. Complexity was already assessed on session creation
+      // 3. For queued sessions, users can re-create the session if they need a fresh assessment
+
+      res.json(session);
     } catch (error) {
       // Handle specific error codes
       if (error instanceof Error) {
