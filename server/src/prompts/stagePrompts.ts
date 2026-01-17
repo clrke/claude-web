@@ -1921,6 +1921,8 @@ export function buildStage5PromptLean(
   const prNumber = prInfo.url.split('/').pop() || '';
   return `Review PR: ${prInfo.title}
 
+Review agents: READ-ONLY only. No file modifications allowed.
+
 1. Spawn parallel agents: Code, Security, Test, Integration
 2. Check CI: gh pr checks ${prNumber} --watch
 3. Findings → add [PLAN_STEP] markers

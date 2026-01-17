@@ -365,6 +365,22 @@ describe('buildStage5PromptLean', () => {
       expect(leanPrompt.length).toBeLessThan(fullPrompt.length * 0.2);
     });
   });
+
+  describe('read-only enforcement warnings', () => {
+    it('should include READ-ONLY warning', () => {
+      const prInfo = createMockPrInfo();
+      const prompt = buildStage5PromptLean(prInfo);
+
+      expect(prompt).toContain('Review agents: READ-ONLY only');
+    });
+
+    it('should include no file modifications warning', () => {
+      const prInfo = createMockPrInfo();
+      const prompt = buildStage5PromptLean(prInfo);
+
+      expect(prompt).toContain('No file modifications allowed');
+    });
+  });
 });
 
 // =============================================================================
