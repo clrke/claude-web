@@ -456,6 +456,30 @@ async function spawnStage2Review(
 }
 
 /**
+ * Determines whether to continue plan review iterations.
+ *
+ * Returns true if:
+ * 1. reviewCount < MAX_PLAN_REVIEW_ITERATIONS, AND
+ * 2. hasDecisionNeeded is true
+ *
+ * This encapsulates the logic: continue reviewing even when approved if decisions remain,
+ * but stop when either no decisions are needed or max iterations reached.
+ *
+ * @param reviewCount - Number of completed review iterations
+ * @param hasDecisionNeeded - Whether the result contained any DECISION_NEEDED markers
+ * @param _planApproved - Whether PLAN_APPROVED was present (reserved for future use)
+ * @returns true if review should continue, false otherwise
+ */
+export function shouldContinuePlanReview(
+  reviewCount: number,
+  hasDecisionNeeded: boolean,
+  _planApproved: boolean
+): boolean {
+  // Continue if under iteration limit AND decisions still pending
+  return reviewCount < MAX_PLAN_REVIEW_ITERATIONS && hasDecisionNeeded;
+}
+
+/**
  * Handle Stage 2 completion - auto-transition to Stage 3 when plan is approved AND valid.
  *
  * Uses state-based verification as primary check (all planning questions answered),

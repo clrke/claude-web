@@ -3,6 +3,7 @@ import {
   MAX_PLAN_REVIEW_ITERATIONS,
 } from '../../server/src/services/ClaudeOrchestrator';
 import { ParsedMarker } from '../../server/src/services/OutputParser';
+import { shouldContinuePlanReview } from '../../server/src/app';
 
 /**
  * Tests for plan review iteration constants and hasDecisionNeeded tracking.
@@ -167,6 +168,94 @@ describe('Plan Review Iteration Constants', () => {
     it('reviewCount=11 should NOT allow continuation', () => {
       const reviewCount = 11;
       expect(reviewCount < MAX_PLAN_REVIEW_ITERATIONS).toBe(false);
+    });
+  });
+});
+
+describe('shouldContinuePlanReview', () => {
+  describe('basic behavior', () => {
+    it('should return true when under iteration limit AND decisions pending', () => {
+      expect(shouldContinuePlanReview(0, true, true)).toBe(true);
+      expect(shouldContinuePlanReview(5, true, true)).toBe(true);
+      expect(shouldContinuePlanReview(9, true, true)).toBe(true);
+    });
+
+    it('should return false when no decisions pending (regardless of iteration count)', () => {
+      expect(shouldContinuePlanReview(0, false, true)).toBe(false);
+      expect(shouldContinuePlanReview(5, false, true)).toBe(false);
+      expect(shouldContinuePlanReview(9, false, true)).toBe(false);
+    });
+
+    it('should return false when at or over iteration limit (even with decisions pending)', () => {
+      expect(shouldContinuePlanReview(10, true, true)).toBe(false);
+      expect(shouldContinuePlanReview(11, true, true)).toBe(false);
+      expect(shouldContinuePlanReview(100, true, true)).toBe(false);
+    });
+
+    it('should return false when both conditions fail', () => {
+      expect(shouldContinuePlanReview(10, false, true)).toBe(false);
+      expect(shouldContinuePlanReview(15, false, true)).toBe(false);
+    });
+  });
+
+  describe('planApproved parameter behavior', () => {
+    it('should continue reviewing when approved but decisions remain', () => {
+      // This is the key new behavior: approved with decisions = continue
+      expect(shouldContinuePlanReview(1, true, true)).toBe(true);
+      expect(shouldContinuePlanReview(5, true, true)).toBe(true);
+    });
+
+    it('should stop reviewing when approved and no decisions remain', () => {
+      // Approved without decisions = stop (natural termination)
+      expect(shouldContinuePlanReview(1, false, true)).toBe(false);
+      expect(shouldContinuePlanReview(5, false, true)).toBe(false);
+    });
+
+    it('should continue reviewing when not approved but decisions remain', () => {
+      // Not approved with decisions = continue (normal flow)
+      expect(shouldContinuePlanReview(1, true, false)).toBe(true);
+      expect(shouldContinuePlanReview(5, true, false)).toBe(true);
+    });
+
+    it('should stop reviewing when not approved and no decisions remain', () => {
+      // Not approved without decisions = stop (edge case, but handled)
+      expect(shouldContinuePlanReview(1, false, false)).toBe(false);
+      expect(shouldContinuePlanReview(5, false, false)).toBe(false);
+    });
+  });
+
+  describe('boundary conditions', () => {
+    it('should handle reviewCount=0 (first iteration complete)', () => {
+      expect(shouldContinuePlanReview(0, true, true)).toBe(true);
+      expect(shouldContinuePlanReview(0, false, true)).toBe(false);
+    });
+
+    it('should handle reviewCount=9 (one before limit)', () => {
+      expect(shouldContinuePlanReview(9, true, true)).toBe(true);
+      expect(shouldContinuePlanReview(9, false, true)).toBe(false);
+    });
+
+    it('should handle reviewCount=10 (at limit)', () => {
+      expect(shouldContinuePlanReview(10, true, true)).toBe(false);
+      expect(shouldContinuePlanReview(10, false, true)).toBe(false);
+    });
+
+    it('should handle negative reviewCount gracefully', () => {
+      // Edge case: should still work (though shouldn't happen in practice)
+      expect(shouldContinuePlanReview(-1, true, true)).toBe(true);
+    });
+  });
+
+  describe('integration with MAX_PLAN_REVIEW_ITERATIONS', () => {
+    it('should use MAX_PLAN_REVIEW_ITERATIONS as the limit', () => {
+      // One less than limit should continue
+      expect(shouldContinuePlanReview(MAX_PLAN_REVIEW_ITERATIONS - 1, true, true)).toBe(true);
+
+      // At limit should stop
+      expect(shouldContinuePlanReview(MAX_PLAN_REVIEW_ITERATIONS, true, true)).toBe(false);
+
+      // Over limit should stop
+      expect(shouldContinuePlanReview(MAX_PLAN_REVIEW_ITERATIONS + 1, true, true)).toBe(false);
     });
   });
 });
