@@ -290,8 +290,9 @@ export default function Dashboard() {
         'abandon',
         'user_requested'
       );
-      // Also update local sessions state to remove the cancelled session
-      setSessions((prev) => prev.filter((s) => s.featureId !== sessionToCancel.featureId));
+      // Store's backoutSession removes from queuedSessions, and socket events
+      // (session.backedout, queue.reordered) also trigger removal - no manual
+      // local state update needed
       setCancelModalOpen(false);
       setSessionToCancel(null);
     } catch {
