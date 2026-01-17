@@ -1040,4 +1040,217 @@ describe('Dashboard', () => {
       expect(screen.queryByText('#3')).not.toBeInTheDocument();
     });
   });
+
+  describe('cancel queued session modal integration', () => {
+    it('opens cancel modal when cancel button is clicked on queued session', async () => {
+      const user = userEvent.setup();
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'My Test Feature' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('My Test Feature')).toBeInTheDocument();
+      });
+
+      // Click cancel button
+      const cancelButton = screen.getByTestId('cancel-session-queued-1');
+      await user.click(cancelButton);
+
+      // Modal should open with correct session title
+      await waitFor(() => {
+        expect(screen.getByTestId('cancel-queued-session-modal')).toBeInTheDocument();
+      });
+      // Verify session title is shown in modal
+      expect(screen.getByTestId('cancel-queued-session-modal')).toHaveTextContent('My Test Feature');
+      expect(screen.getByTestId('cancel-queued-session-modal')).toHaveTextContent('Cancel Queued Session');
+    });
+
+    it('closes modal without action when Cancel button is clicked', async () => {
+      const user = userEvent.setup();
+      const mockBackoutSession = vi.fn().mockResolvedValue(undefined);
+      useSessionStore.setState({ backoutSession: mockBackoutSession });
+
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'Test Feature' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Feature')).toBeInTheDocument();
+      });
+
+      // Open modal
+      await user.click(screen.getByTestId('cancel-session-queued-1'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('cancel-queued-session-modal')).toBeInTheDocument();
+      });
+
+      // Click Cancel button in modal
+      await user.click(screen.getByTestId('cancel-button'));
+
+      // Modal should close
+      await waitFor(() => {
+        expect(screen.queryByTestId('cancel-queued-session-modal')).not.toBeInTheDocument();
+      });
+
+      // backoutSession should NOT have been called
+      expect(mockBackoutSession).not.toHaveBeenCalled();
+    });
+
+    it('calls backoutSession with correct params when confirm button is clicked', async () => {
+      const user = userEvent.setup();
+      const mockBackoutSession = vi.fn().mockResolvedValue(undefined);
+      useSessionStore.setState({ backoutSession: mockBackoutSession });
+
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'Test Feature' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Feature')).toBeInTheDocument();
+      });
+
+      // Open modal
+      await user.click(screen.getByTestId('cancel-session-queued-1'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('cancel-queued-session-modal')).toBeInTheDocument();
+      });
+
+      // Click Confirm button
+      await user.click(screen.getByTestId('confirm-button'));
+
+      // backoutSession should be called with correct params
+      await waitFor(() => {
+        expect(mockBackoutSession).toHaveBeenCalledWith('proj1', 'queued-1', 'abandon', 'user_requested');
+      });
+    });
+
+    it('shows loading state during backout operation', async () => {
+      const user = userEvent.setup();
+      let resolveBackout: () => void;
+      const backoutPromise = new Promise<void>((resolve) => {
+        resolveBackout = resolve;
+      });
+      const mockBackoutSession = vi.fn().mockImplementation((_projectId: string, featureId: string) => {
+        // Simulate store update when backout resolves
+        return backoutPromise.then(() => {
+          useSessionStore.setState((state) => ({
+            queuedSessions: state.queuedSessions.filter((s) => s.featureId !== featureId),
+          }));
+        });
+      });
+      useSessionStore.setState({ backoutSession: mockBackoutSession });
+
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'Test Feature' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Feature')).toBeInTheDocument();
+      });
+
+      // Open modal
+      await user.click(screen.getByTestId('cancel-session-queued-1'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('cancel-queued-session-modal')).toBeInTheDocument();
+      });
+
+      // Click Confirm button
+      await user.click(screen.getByTestId('confirm-button'));
+
+      // Should show loading state
+      await waitFor(() => {
+        expect(screen.getByText('Removing...')).toBeInTheDocument();
+      });
+
+      // Buttons should be disabled during loading
+      expect(screen.getByTestId('confirm-button')).toBeDisabled();
+      expect(screen.getByTestId('cancel-button')).toBeDisabled();
+
+      // Resolve the promise
+      resolveBackout!();
+
+      // Modal should close after completion
+      await waitFor(() => {
+        expect(screen.queryByTestId('cancel-queued-session-modal')).not.toBeInTheDocument();
+      });
+    });
+
+    it('removes session from UI after successful cancellation', async () => {
+      const user = userEvent.setup();
+      const mockBackoutSession = vi.fn().mockImplementation((_projectId: string, featureId: string) => {
+        // Simulate store update on backout
+        useSessionStore.setState((state) => ({
+          queuedSessions: state.queuedSessions.filter((s) => s.featureId !== featureId),
+        }));
+        return Promise.resolve();
+      });
+      useSessionStore.setState({ backoutSession: mockBackoutSession });
+
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'First Feature' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-2', status: 'queued', queuePosition: 2, title: 'Second Feature' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('First Feature')).toBeInTheDocument();
+        expect(screen.getByText('Second Feature')).toBeInTheDocument();
+      });
+
+      // Open modal for first session
+      await user.click(screen.getByTestId('cancel-session-queued-1'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('cancel-queued-session-modal')).toBeInTheDocument();
+      });
+
+      // Click Confirm button
+      await user.click(screen.getByTestId('confirm-button'));
+
+      // Session should be removed from UI
+      await waitFor(() => {
+        expect(screen.queryByText('First Feature')).not.toBeInTheDocument();
+      });
+
+      // Second session should still be visible
+      expect(screen.getByText('Second Feature')).toBeInTheDocument();
+    });
+  });
 });
