@@ -33,6 +33,12 @@ export interface ExecutionStatusOptions {
   autoTransitionTo?: number;
   /** Reason for the status change (e.g., plan_changes_detected) */
   reason?: string;
+  /** Step IDs added during Stage 5 PR Review */
+  addedStepIds?: string[];
+  /** Step IDs removed during Stage 5 PR Review */
+  removedStepIds?: string[];
+  /** Step IDs reset to pending due to content changes */
+  resetStepIds?: string[];
 }
 
 /**

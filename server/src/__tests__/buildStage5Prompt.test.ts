@@ -125,6 +125,18 @@ describe('buildStage5Prompt', () => {
       expect(prompt).toContain('complexity=');
     });
 
+    it('should explain auto-reset for existing completed steps', () => {
+      const session = createMockSession();
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5Prompt(session, plan, prInfo);
+
+      expect(prompt).toContain('EXISTING completed steps');
+      expect(prompt).toContain('automatically detect content changes');
+      expect(prompt).toContain('reset their status to pending');
+    });
+
     it('should include claudePlanFilePath in instructions', () => {
       const session = createMockSession({
         claudePlanFilePath: '/home/user/.claude-web/abc123/feature/plan.md',

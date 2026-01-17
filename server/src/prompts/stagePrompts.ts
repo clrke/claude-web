@@ -1218,7 +1218,7 @@ Suggested approach: How to fix it.
 
 3. Update plan.json with matching step entries (id, title, description, status="pending")
 
-4. Also update existing steps if descriptions don't match implementation or complexity was different.
+4. For EXISTING completed steps that need changes: just edit the content (title/description). The system will automatically detect content changes and reset their status to pending for re-implementation.
 
 **IMPORTANT:** You can ONLY edit plan files in ~/.claude-web/. You cannot edit the codebase itself.
 

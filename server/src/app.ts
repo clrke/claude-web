@@ -1777,7 +1777,25 @@ async function handleStage5Result(
     const changeResult = hasPlanChangedSinceSnapshot(physicalSessionDir, plan);
     if (changeResult?.changed) {
       const { addedStepIds, removedStepIds } = changeResult;
-      console.log(`[Stage 5] Plan changed during PR review for ${session.featureId} - transitioning to Stage 2 (added: ${addedStepIds.length}, removed: ${removedStepIds.length})`);
+
+      // Auto-reset completed steps whose content has changed
+      // This handles both new steps (no hash) and modified existing steps (hash mismatch)
+      const resetStepIds: string[] = [];
+      for (const step of plan.steps) {
+        if (step.status === 'completed' && !isStepContentUnchanged(step)) {
+          step.status = 'pending';
+          step.contentHash = null;
+          resetStepIds.push(step.id);
+        }
+      }
+
+      // Save updated plan with reset steps
+      if (resetStepIds.length > 0) {
+        await storage.writeJson(`${sessionDir}/plan.json`, plan);
+        console.log(`[Stage 5] Reset ${resetStepIds.length} steps with changed content: ${resetStepIds.join(', ')}`);
+      }
+
+      console.log(`[Stage 5] Plan changed during PR review for ${session.featureId} - transitioning to Stage 2 (added: ${addedStepIds.length}, removed: ${removedStepIds.length}, reset: ${resetStepIds.length})`);
 
       // Broadcast plan change detection event to notify client of auto-transition
       eventBroadcaster?.executionStatus(
@@ -1785,7 +1803,7 @@ async function handleStage5Result(
         session.featureId,
         'running',
         'plan_changes_detected',
-        { stage: 5, autoTransitionTo: 2, reason: 'Plan steps modified during PR Review', addedStepIds, removedStepIds }
+        { stage: 5, autoTransitionTo: 2, reason: 'Plan steps modified during PR Review', addedStepIds, removedStepIds, resetStepIds }
       );
 
       // Clean up snapshot
@@ -1807,7 +1825,13 @@ async function handleStage5Result(
       if (removedStepIds.length > 0) {
         revisionFeedback += `\n\n**Steps removed:** ${removedStepIds.join(', ')}`;
       }
-      revisionFeedback += '\n\nPlease review the updated plan, especially the new steps. Ask clarifying questions if needed, then approve the plan.';
+      if (resetStepIds.length > 0) {
+        // Get the titles of reset steps for context
+        const resetSteps = plan.steps.filter(s => resetStepIds.includes(s.id));
+        const resetStepDescriptions = resetSteps.map(s => `- ${s.id}: ${s.title}`).join('\n');
+        revisionFeedback += `\n\n**Steps with modified content (reset to pending for re-implementation):**\n${resetStepDescriptions}`;
+      }
+      revisionFeedback += '\n\nPlease review the updated plan. Ask clarifying questions if needed, then approve the plan.';
 
       const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback);
       await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, revisionPrompt);
