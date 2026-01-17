@@ -577,6 +577,22 @@ describe('Streamlined Prompts', () => {
         const ciReviewerMatches = prompt.match(/CI Reviewer/g);
         expect(ciReviewerMatches?.length).toBe(1);
       });
+
+      it('should use infrastructure key for CI Reviewer (step-19 verification)', () => {
+        // This test documents that 'infrastructure' is the correct key for CI Reviewer
+        // in STAGE5_REVIEW_AGENTS, not 'ci'
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: ['infrastructure'], // Use the correct key
+        };
+
+        const prompt = buildStage5PromptStreamlined(session, mockPlan, prInfo);
+
+        // The infrastructure agent should produce CI Reviewer
+        expect(prompt).toContain('CI Reviewer');
+        expect(prompt).toContain('gh pr checks');
+      });
     });
 
     describe('spawns fewer agents than full prompt', () => {
