@@ -189,15 +189,14 @@ Spawn review agents → Wait for CI → Present issues → User decides → Fix 
 
 **What happens:**
 1. Context compacted and refreshed (removes implementation bias)
-2. Parallel review subagents check different domains
-3. CI Agent monitors `gh pr checks` for pass/fail
-4. Issues batched in `[REVIEW_CHECKPOINT]` blocks
-5. User decides: fix now, create follow-up ticket, or accept risk
-6. If fixes needed → returns to Stage 2 for plan update
+2. Parallel review subagents: Code, Security, Test, Integration
+3. CI checks monitored via `gh pr checks`
+4. User decides: fix now, create follow-up ticket, or accept risk
+5. If fixes needed → returns to Stage 2 for plan update
 
 **Outputs:**
-- `[CI_STATUS]` - CI check results
 - `[DECISION_NEEDED]` - Issues for user to decide
+- `[CI_FAILED]` - CI check failed
 - `[PR_APPROVED]` - PR ready for merge
 - Transitions to Stage 6 when approved
 
@@ -1528,17 +1527,6 @@ Title: {{prTitle}}
 Branch: {{featureBranch}} → {{baseBranch}}
 [/PR_CREATED]
 
-PR review batching (Stage 5):
-[REVIEW_CHECKPOINT]
-## Review Findings
-(Multiple [DECISION_NEEDED] blocks)
-[/REVIEW_CHECKPOINT]
-
-CI status (Stage 5):
-[CI_STATUS status="passing|failing|pending"]
-{{checkResults}}
-[/CI_STATUS]
-
 PR approval (Stage 5):
 [PR_APPROVED]
 The PR is ready to merge.
@@ -1985,10 +1973,7 @@ Description: {{prDescription}}
    - Tests: Is coverage adequate?
    - Integration: Do API contracts match between layers?
 
-3. Batch all findings and present as prioritized decisions:
-
-[REVIEW_CHECKPOINT]
-## Review Findings
+3. Present findings as prioritized decisions:
 
 [DECISION_NEEDED priority="1" category="critical" file="path/to/file.ts" line="42"]
 Issue: Critical problem that must be fixed before merge.
@@ -2009,16 +1994,7 @@ How should we handle this?
 - Option C: Accept as-is with justification
 [/DECISION_NEEDED]
 
-[DECISION_NEEDED priority="3" category="suggestion" file="path/to/file.ts" line="120"]
-Issue: Minor improvement opportunity.
-
-Would you like to address this?
-- Option A: Apply suggestion
-- Option B: Skip for now (recommended)
-[/DECISION_NEEDED]
-[/REVIEW_CHECKPOINT]
-
-4. Present decisions progressively:
+4. Priority levels:
    - Priority 1: Critical/security issues - must be resolved
    - Priority 2: Major issues - should be resolved or justified
    - Priority 3: Suggestions - optional improvements
@@ -2026,12 +2002,7 @@ Would you like to address this?
 5. If issues or CI failures found, return to Stage 2 to update the plan with fixes,
    then re-implement and create a new PR for review.
 
-6. Report CI status:
-   [CI_STATUS status="passing|failing|pending"]
-   {{checkResults}}
-   [/CI_STATUS]
-
-7. When CI passes and no issues found:
+6. When CI passes and no issues found:
 [PR_APPROVED]
 The PR is ready to merge. All CI checks passing.
 [/PR_APPROVED]

@@ -77,18 +77,6 @@ describe('sanitizeInput', () => {
       expect(escapeMarkers(undefined as unknown as string)).toBe(undefined);
     });
 
-    it('should escape [REVIEW_CHECKPOINT]', () => {
-      const input = '[REVIEW_CHECKPOINT] ## Review';
-      const result = escapeMarkers(input);
-      expect(result).toBe('\\[REVIEW_CHECKPOINT] ## Review');
-    });
-
-    it('should escape [CI_STATUS markers', () => {
-      const input = '[CI_STATUS status="passing"]';
-      const result = escapeMarkers(input);
-      expect(result).toBe('\\[CI_STATUS status="passing"]');
-    });
-
     it('should escape [RETURN_TO_STAGE_2]', () => {
       const input = '[RETURN_TO_STAGE_2] Reason: test';
       const result = escapeMarkers(input);

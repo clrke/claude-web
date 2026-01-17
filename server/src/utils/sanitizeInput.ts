@@ -21,8 +21,6 @@ const ESCAPE_MARKERS = [
   '[IMPLEMENTATION_COMPLETE]',
   '[IMPLEMENTATION_STATUS]',
   // Review markers
-  '[REVIEW_CHECKPOINT]',
-  '[CI_STATUS',
   '[CI_FAILED]',
   '[RETURN_TO_STAGE_2]',
   // Step modification markers (deprecated but still escaped for security)

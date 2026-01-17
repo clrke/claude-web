@@ -1167,14 +1167,7 @@ export function buildStage5Prompt(session: Session, plan: Plan, prInfo: { title:
     ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
     : '';
 
-  // Get the plan.json path from the plan.md path
-  const planJsonPath = session.claudePlanFilePath
-    ? session.claudePlanFilePath.replace(/plan\.md$/, 'plan.json')
-    : null;
-
-  return `You are reviewing a pull request. Be objective and thorough.
-
-IMPORTANT: You are reviewing this code with fresh eyes. Evaluate it as if you did not write it.
+  return `You are reviewing a pull request.
 
 ## Feature
 Title: ${sanitized.title}
@@ -1191,150 +1184,34 @@ URL: ${prInfo.url}
 
 ## Instructions
 
-### Phase 1: Parallel Review (MANDATORY)
-Use the Task tool to spawn review agents in parallel.
+### Phase 1: Parallel Review
+Spawn these review agents in parallel (READ-ONLY tools only):
 
-**IMPORTANT - Subagent Restrictions:**
-When spawning Task subagents in this stage, instruct them to use READ-ONLY tools only:
-- Allowed: Read, Glob, Grep, Bash (read-only: git diff, git log, gh pr checks)
-- NOT allowed: Edit, Write, Bash with modifications (no commits, no file changes)
-Include this restriction in each subagent prompt to prevent unintended modifications.
+1. **Code Agent**: \`git diff main...HEAD\` - check logic, error handling, edge cases
+2. **Security Agent**: Check auth, injection, XSS, input validation, secrets
+3. **Test Agent**: Verify new code has tests, edge cases covered
+4. **Integration Agent**: Check API contracts, types, error handling
 
-**Note:** You (main agent) can edit plan files directly - see "Phase 4: Document Findings" section below.
+Also run: \`gh pr checks ${prInfo.url.split('/').pop()} --watch\`
 
-1. **Frontend Agent**: Review UI/client-side changes.
-   - Run: git diff main...HEAD -- '*.tsx' '*.ts' '*.css' (client paths)
-   - Correctness: Component logic, state handling, error states
-   - Security: XSS risks, sensitive data in client, input sanitization
-   - Performance: Bundle impact, render efficiency, unnecessary re-renders
-   - Output: List of UI issues with file:line refs and severity
-
-2. **Backend Agent**: Review API/server-side changes.
-   - Run: git diff main...HEAD -- (server paths)
-   - Correctness: Endpoint logic, error handling, edge cases
-   - Security: Auth checks, injection risks, input validation, secrets
-   - Performance: Query efficiency, N+1 issues, caching
-   - Output: List of backend issues with file:line refs and severity
-
-3. **Database Agent**: Review data layer changes.
-   - Run: git diff main...HEAD -- (schema/migration paths)
-   - Correctness: Schema design, migration safety, relationships
-   - Security: Access controls, sensitive data handling
-   - Performance: Index usage, query patterns
-   - Output: List of data issues with file:line refs and severity
-
-4. **Integration Agent**: Review frontend-backend boundaries.
-   - Check: API contracts match, types consistent across layers
-   - Security: Auth token handling, CORS, error message exposure
-   - Performance: Payload sizes, request patterns
-   - Output: List of integration issues with severity
-
-5. **Test Agent**: Verify test coverage for changes.
-   - Run: Find test files matching changed source files
-   - Check: New code has tests, edge cases covered
-   - Output: List of untested code paths with file:line refs
-
-6. **CI Agent**: Wait for CI to complete.
-   - Run: gh pr checks ${prInfo.url.split('/').pop()} --watch
-   - Output: Final status (all passing / X failing)
-
-Wait for ALL agents to complete before proceeding.
-
-### Phase 2: Compile Findings
-Summarize all findings in a review checkpoint:
+### Phase 2: Document Findings
+For issues, add plan steps to ${session.claudePlanFilePath || 'plan.md'}:
 
 \`\`\`
-[REVIEW_CHECKPOINT]
-## Review Findings
-
-### Critical Issues (Priority 1)
-- [file.ts:42] Issue description and impact
-
-### Major Issues (Priority 2)
-- [file.ts:88] Issue description and impact
-
-### Minor Issues (Priority 3)
-- [file.ts:120] Issue description (optional fix)
-
-### No Issues Found
-All review agents found no significant issues.
-[/REVIEW_CHECKPOINT]
-\`\`\`
-
-### Phase 3: Report CI Status
-Always report CI status:
-
-\`\`\`
-[CI_STATUS status="passing|failing|pending"]
-Check Name: Status
-Check Name: Status
-[/CI_STATUS]
-\`\`\`
-
-### Phase 4: Document Findings in Plan (CRITICAL)
-If you found ANY issues (Priority 1, 2, or 3) or CI failures, you MUST add them as new plan steps.
-
-**IMPORTANT:** Do NOT present issues as questions to the user. Instead, document them as plan steps. The system will automatically detect plan changes and return to Stage 2, where questions will be asked if needed.
-
-**How to Add Finding Steps:**
-1. Read the current plan files:
-   - ${session.claudePlanFilePath || '~/.claude-web/<session>/plan.md'}
-   - ${planJsonPath || 'same directory as plan.json'}
-
-2. For EACH issue found, add a new step to plan.md:
-\`\`\`
-[PLAN_STEP id="step-N" parent="null" status="pending" complexity="low|medium|high"]
-Fix: [Brief title of the fix]
-[Priority X] [file.ts:line] Full description of the issue and what needs to be fixed.
-Impact: What could go wrong if not addressed.
-Suggested approach: How to fix it.
+[PLAN_STEP id="step-N" parent="null" status="pending"]
+Fix: [Brief title]
+[Priority X] [file.ts:line] Description and fix approach.
 [/PLAN_STEP]
 \`\`\`
 
-3. Update plan.json with matching step entries (id, title, description, status="pending")
+### Phase 3: Decision
+- **CI failing:** Add fix steps, then \`[CI_FAILED]\`
+- **Issues found:** Add fix steps. System auto-returns to Stage 2.
+- **All good:** \`[PR_APPROVED]\`
 
-4. For EXISTING completed steps that need changes: just edit the content (title/description). The system will automatically detect content changes and reset their status to pending for re-implementation.
-
-**IMPORTANT:** You can ONLY edit plan files in ~/.claude-web/. You cannot edit the codebase itself.
-
-### Phase 5: Decision
-Based on findings and CI status:
-
-**If CI is failing:**
-1. Add new plan steps for each CI failure fix needed
-2. Output:
-\`\`\`
-[CI_FAILED]
-The following CI checks are failing:
-- Check name: Error message
-
-New plan steps added to address these failures.
-[/CI_FAILED]
-\`\`\`
-
-**If issues found (any priority):**
-1. Add new plan steps for each issue (as described in Phase 4)
-2. The system will automatically detect plan changes and return to Plan Review
-
-**If CI passes AND no issues found:**
-\`\`\`
-[PR_APPROVED]
-The PR is ready to merge. All CI checks passing.
-
-Summary:
-- X files changed
-- All tests passing
-- No security issues found
-- Code follows project patterns
-[/PR_APPROVED]
-\`\`\`
-
-### Important Rules
-1. Be objective - review as if you didn't write the code
-2. Check CI status before approving
-3. Do NOT ask questions - document findings as new plan steps instead
-4. Only output PR_APPROVED when CI passes AND no issues found
-5. The system auto-detects plan changes and returns to Stage 2 for review`;
+### Rules
+- Review as if you didn't write the code
+- Only approve when CI passes AND no issues`;
 }
 
 // ============================================================================
@@ -1492,17 +1369,17 @@ Note: Git push already done. Check if PR exists first with gh pr list.`;
 /**
  * Lean Stage 5 prompt.
  * Claude knows the review format from context.
- * Uses [PLAN_STEP] for findings (not [DECISION_NEEDED]) to trigger auto-return to Stage 2.
+ * Uses [PLAN_STEP] for findings to trigger auto-return to Stage 2.
  */
 export function buildStage5PromptLean(
   prInfo: { title: string; url: string }
 ): string {
-  return `Review PR: ${prInfo.url}
-Title: ${prInfo.title}
+  const prNumber = prInfo.url.split('/').pop() || '';
+  return `Review PR: ${prInfo.title}
 
-1. Run parallel review agents (code, security, tests, integration)
-2. Check CI: gh pr checks
-3. Document findings as [PLAN_STEP] markers (do NOT use DECISION_NEEDED)
+1. Spawn parallel agents: Code, Security, Test, Integration
+2. Check CI: gh pr checks ${prNumber} --watch
+3. Findings → add [PLAN_STEP] markers
 4. CI failing → [CI_FAILED]
 5. All good → [PR_APPROVED]`;
 }

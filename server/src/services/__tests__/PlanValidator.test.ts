@@ -1087,11 +1087,6 @@ describe('PlanValidator - Marker Pattern Detection', () => {
       expect(containsMarkerPattern('[PR_CREATED url=...]')).toBe(true);
     });
 
-    it('detects CI_STATUS markers', () => {
-      expect(containsMarkerPattern('[CI_STATUS]')).toBe(true);
-      expect(containsMarkerPattern('[/CI_STATUS]')).toBe(true);
-    });
-
     it('detects STEP_COMPLETE markers', () => {
       expect(containsMarkerPattern('[STEP_COMPLETE]')).toBe(true);
       expect(containsMarkerPattern('[STEP_COMPLETE step-1]')).toBe(true);

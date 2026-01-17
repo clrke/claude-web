@@ -389,7 +389,7 @@ describe('Lean Prompt Selection Logic', () => {
       expect(result.prompt).not.toContain('You are reviewing a pull request');
     });
 
-    it('should include PR URL in lean prompt', () => {
+    it('should include PR number in lean prompt gh pr checks command', () => {
       const sessionWithId = {
         ...baseSession,
         claudeSessionId: 'claude-session-123',
@@ -398,7 +398,7 @@ describe('Lean Prompt Selection Logic', () => {
 
       const result = selectStage5Prompt(sessionWithId, mockPlan, prInfo);
 
-      expect(result.prompt).toContain('https://github.com/test/repo/pull/123');
+      expect(result.prompt).toContain('gh pr checks 123');
     });
 
     it('should include PR title in lean prompt', () => {

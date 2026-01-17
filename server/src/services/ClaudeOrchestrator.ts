@@ -87,7 +87,6 @@ export function hasActionableContent(parsed: ParsedMarker): boolean {
     parsed.implementationStatus !== null ||
     parsed.prCreated !== null ||
     parsed.planApproved ||
-    parsed.ciStatus !== null ||
     parsed.ciFailed ||
     parsed.prApproved ||
     parsed.returnToStage2 !== null

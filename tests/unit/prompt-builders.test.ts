@@ -1381,10 +1381,10 @@ describe('Lean Prompt Builders', () => {
       url: 'https://github.com/test/repo/pull/123',
     };
 
-    it('should include PR URL', () => {
+    it('should include PR number in gh pr checks command', () => {
       const prompt = buildStage5PromptLean(prInfo);
 
-      expect(prompt).toContain('https://github.com/test/repo/pull/123');
+      expect(prompt).toContain('gh pr checks 123');
     });
 
     it('should include PR title', () => {
@@ -1396,7 +1396,7 @@ describe('Lean Prompt Builders', () => {
     it('should mention parallel review agents', () => {
       const prompt = buildStage5PromptLean(prInfo);
 
-      expect(prompt).toContain('parallel review agents');
+      expect(prompt).toContain('Spawn parallel agents');
     });
 
     it('should reference CI check command', () => {
@@ -1417,12 +1417,10 @@ describe('Lean Prompt Builders', () => {
       expect(prompt).toContain('[PR_APPROVED]');
     });
 
-    it('should reference PLAN_STEP marker for findings (not DECISION_NEEDED)', () => {
+    it('should reference PLAN_STEP marker for findings', () => {
       const prompt = buildStage5PromptLean(prInfo);
 
-      // Lean prompt should use PLAN_STEP for findings, not DECISION_NEEDED
       expect(prompt).toContain('[PLAN_STEP]');
-      expect(prompt).toContain('do NOT use DECISION_NEEDED');
     });
 
     it('should be significantly shorter than full Stage 5 prompt', () => {
