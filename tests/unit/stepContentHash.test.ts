@@ -759,7 +759,8 @@ describe('plan-level hash functions', () => {
       const originalPlan = createMockPlan([
         createMockStep('step-1', 'Add feature', 'Basic implementation'),
       ]);
-      savePlanSnapshot(testDir, computePlanHash(originalPlan), originalPlan.planVersion);
+      const originalStepIds = originalPlan.steps.map(s => s.id);
+      savePlanSnapshot(testDir, computePlanHash(originalPlan), originalPlan.planVersion, originalStepIds);
 
       // During Stage 5: Claude realizes a step was missing
       const modifiedPlan = createMockPlan([
@@ -769,6 +770,52 @@ describe('plan-level hash functions', () => {
 
       const result = hasPlanChangedSinceSnapshot(testDir, modifiedPlan);
       expect(result?.changed).toBe(true);
+      expect(result?.addedStepIds).toEqual(['step-1a']);
+      expect(result?.removedStepIds).toEqual([]);
+    });
+
+    it('should identify added and removed step IDs', () => {
+      // Before Stage 5: 3 steps
+      const originalPlan = createMockPlan([
+        createMockStep('step-1', 'Step 1', 'Description 1'),
+        createMockStep('step-2', 'Step 2', 'Description 2'),
+        createMockStep('step-3', 'Step 3', 'Description 3'),
+      ]);
+      const originalStepIds = originalPlan.steps.map(s => s.id);
+      savePlanSnapshot(testDir, computePlanHash(originalPlan), originalPlan.planVersion, originalStepIds);
+
+      // After Stage 5: removed step-2, added step-4 and step-5
+      const modifiedPlan = createMockPlan([
+        createMockStep('step-1', 'Step 1', 'Description 1'),
+        createMockStep('step-3', 'Step 3', 'Description 3'),
+        createMockStep('step-4', 'New Step 4', 'Added during PR review'),
+        createMockStep('step-5', 'New Step 5', 'Also added during PR review'),
+      ]);
+
+      const result = hasPlanChangedSinceSnapshot(testDir, modifiedPlan);
+      expect(result?.changed).toBe(true);
+      expect(result?.addedStepIds).toEqual(['step-4', 'step-5']);
+      expect(result?.removedStepIds).toEqual(['step-2']);
+    });
+
+    it('should handle empty stepIds in old snapshots gracefully', () => {
+      // Simulate old snapshot without stepIds (backwards compatibility)
+      const originalPlan = createMockPlan([
+        createMockStep('step-1', 'Step 1', 'Description 1'),
+      ]);
+      // Save without stepIds (simulating old behavior)
+      savePlanSnapshot(testDir, computePlanHash(originalPlan), originalPlan.planVersion);
+
+      const modifiedPlan = createMockPlan([
+        createMockStep('step-1', 'Step 1', 'Description 1'),
+        createMockStep('step-2', 'Step 2', 'New step'),
+      ]);
+
+      const result = hasPlanChangedSinceSnapshot(testDir, modifiedPlan);
+      expect(result?.changed).toBe(true);
+      // With no stepIds in snapshot, all current steps appear as "added"
+      expect(result?.addedStepIds).toEqual(['step-1', 'step-2']);
+      expect(result?.removedStepIds).toEqual([]);
     });
 
     it('should clean up snapshot after workflow completes', () => {

@@ -1654,9 +1654,10 @@ async function spawnStage5PRReview(
   const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
   if (plan) {
     const planHash = computePlanHash(plan);
+    const stepIds = plan.steps.map(s => s.id);
     const physicalSessionDir = storage.getAbsolutePath(sessionDir);
-    savePlanSnapshot(physicalSessionDir, planHash, plan.planVersion);
-    console.log(`Saved plan snapshot for ${session.featureId} (hash: ${planHash.substring(0, 8)}...)`);
+    savePlanSnapshot(physicalSessionDir, planHash, plan.planVersion, stepIds);
+    console.log(`Saved plan snapshot for ${session.featureId} (hash: ${planHash.substring(0, 8)}..., ${stepIds.length} steps)`);
   }
 
   // Update status to running
@@ -1775,7 +1776,8 @@ async function handleStage5Result(
   if (plan) {
     const changeResult = hasPlanChangedSinceSnapshot(physicalSessionDir, plan);
     if (changeResult?.changed) {
-      console.log(`[Stage 5] Plan changed during PR review for ${session.featureId} - transitioning to Stage 2`);
+      const { addedStepIds, removedStepIds } = changeResult;
+      console.log(`[Stage 5] Plan changed during PR review for ${session.featureId} - transitioning to Stage 2 (added: ${addedStepIds.length}, removed: ${removedStepIds.length})`);
 
       // Broadcast plan change detection event to notify client of auto-transition
       eventBroadcaster?.executionStatus(
@@ -1783,7 +1785,7 @@ async function handleStage5Result(
         session.featureId,
         'running',
         'plan_changes_detected',
-        { stage: 5, autoTransitionTo: 2, reason: 'Plan steps modified during PR Review' }
+        { stage: 5, autoTransitionTo: 2, reason: 'Plan steps modified during PR Review', addedStepIds, removedStepIds }
       );
 
       // Clean up snapshot
@@ -1794,8 +1796,19 @@ async function handleStage5Result(
       const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 2);
       eventBroadcaster?.stageChanged(updatedSession, previousStage);
 
-      // Build plan revision prompt
-      const revisionFeedback = 'Plan steps were modified during PR review. Please review the updated plan.';
+      // Build plan revision prompt with specific info about what changed
+      let revisionFeedback = 'Plan steps were modified during PR review.';
+      if (addedStepIds.length > 0) {
+        // Get the titles of added steps for context
+        const addedSteps = plan.steps.filter(s => addedStepIds.includes(s.id));
+        const addedStepDescriptions = addedSteps.map(s => `- ${s.id}: ${s.title}`).join('\n');
+        revisionFeedback += `\n\n**New steps added during PR Review (need your review):**\n${addedStepDescriptions}`;
+      }
+      if (removedStepIds.length > 0) {
+        revisionFeedback += `\n\n**Steps removed:** ${removedStepIds.join(', ')}`;
+      }
+      revisionFeedback += '\n\nPlease review the updated plan, especially the new steps. Ask clarifying questions if needed, then approve the plan.';
+
       const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback);
       await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, revisionPrompt);
 

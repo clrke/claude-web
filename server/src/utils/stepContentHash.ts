@@ -157,6 +157,7 @@ export interface PlanSnapshot {
   hash: string;
   savedAt: string;
   planVersion: number;
+  stepIds: string[];  // Step IDs at the time of snapshot, for detecting added steps
 }
 
 const PLAN_SNAPSHOT_FILENAME = '.plan-snapshot.json';
@@ -168,13 +169,15 @@ const PLAN_SNAPSHOT_FILENAME = '.plan-snapshot.json';
  * @param sessionDir - Directory path for the session (e.g., ~/.claude-web/sessionId/featureId/)
  * @param hash - The plan hash to save
  * @param planVersion - The plan version number
+ * @param stepIds - Array of step IDs at the time of snapshot (optional for backwards compatibility)
  */
-export function savePlanSnapshot(sessionDir: string, hash: string, planVersion: number): void {
+export function savePlanSnapshot(sessionDir: string, hash: string, planVersion: number, stepIds?: string[]): void {
   const snapshotPath = path.join(sessionDir, PLAN_SNAPSHOT_FILENAME);
   const snapshot: PlanSnapshot = {
     hash,
     savedAt: new Date().toISOString(),
     planVersion,
+    stepIds: stepIds || [],
   };
 
   fs.writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2), 'utf8');
@@ -218,26 +221,49 @@ export function deletePlanSnapshot(sessionDir: string): void {
 }
 
 /**
+ * Result of plan change detection.
+ */
+export interface PlanChangeResult {
+  changed: boolean;
+  beforeHash: string;
+  afterHash: string;
+  addedStepIds: string[];    // Step IDs that were added since snapshot
+  removedStepIds: string[];  // Step IDs that were removed since snapshot
+}
+
+/**
  * Check if the plan has changed since the last snapshot.
  * Convenience function that loads snapshot, computes current hash, and compares.
+ * Also identifies which steps were added or removed.
  *
  * @param sessionDir - Directory path for the session
  * @param currentPlan - The current plan to compare against snapshot
- * @returns Object with changed status and details, or null if no snapshot exists
+ * @returns Object with changed status, hashes, and added/removed steps, or null if no snapshot exists
  */
 export function hasPlanChangedSinceSnapshot(
   sessionDir: string,
   currentPlan: Plan
-): { changed: boolean; beforeHash: string; afterHash: string } | null {
+): PlanChangeResult | null {
   const snapshot = loadPlanSnapshot(sessionDir);
   if (!snapshot) {
     return null;
   }
 
   const currentHash = computePlanHash(currentPlan);
+  const currentStepIds = currentPlan.steps.map(s => s.id);
+  const snapshotStepIds = snapshot.stepIds || [];
+
+  // Find added steps (in current but not in snapshot)
+  const addedStepIds = currentStepIds.filter(id => !snapshotStepIds.includes(id));
+
+  // Find removed steps (in snapshot but not in current)
+  const removedStepIds = snapshotStepIds.filter(id => !currentStepIds.includes(id));
+
   return {
     changed: comparePlanHashes(snapshot.hash, currentHash),
     beforeHash: snapshot.hash,
     afterHash: currentHash,
+    addedStepIds,
+    removedStepIds,
   };
 }
