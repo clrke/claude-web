@@ -472,7 +472,6 @@ describe('Dashboard', () => {
 
   describe('queue reordering with multiple projects', () => {
     it('uses projectId from queued sessions, not active session, when reordering', async () => {
-      const user = userEvent.setup();
       const mockReorderQueue = vi.fn().mockResolvedValue(undefined);
 
       useSessionStore.setState({
