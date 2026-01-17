@@ -373,8 +373,10 @@ export default function SessionView() {
   }, []);
 
   const handleComplexityAssessed = useCallback((data: ComplexityAssessedEvent) => {
+    // Only update if the event is for the current session's project
+    if (data.projectId !== projectId) return;
     applyComplexityAssessment(data.featureId, data.complexity, data.reason, data.suggestedAgents, data.useLeanPrompts);
-  }, [applyComplexityAssessment]);
+  }, [projectId, applyComplexityAssessment]);
 
   // Stage transition handler
   const handleTransition = useCallback(async (targetStage: number) => {

@@ -402,6 +402,48 @@ describe('ComplexityAssessedEvent', () => {
     expect(event.timestamp).toBe('2026-01-11T00:30:00Z');
   });
 
+  it('should include projectId for cross-session validation (step-16 fix)', () => {
+    // This test verifies the event structure supports projectId validation
+    // The SessionView handler should check: if (data.projectId !== projectId) return;
+    const currentProjectId = 'project-current';
+    const otherProjectId = 'project-other';
+
+    const eventForCurrentProject: ComplexityAssessedEvent = {
+      projectId: currentProjectId,
+      featureId: 'feature-123',
+      sessionId: 'session-123',
+      complexity: 'simple',
+      reason: 'Simple change',
+      suggestedAgents: ['frontend'],
+      useLeanPrompts: true,
+      durationMs: 1000,
+      timestamp: new Date().toISOString(),
+    };
+
+    const eventForOtherProject: ComplexityAssessedEvent = {
+      projectId: otherProjectId,
+      featureId: 'feature-456',
+      sessionId: 'session-456',
+      complexity: 'complex',
+      reason: 'Complex change',
+      suggestedAgents: ['frontend', 'backend'],
+      useLeanPrompts: false,
+      durationMs: 2000,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Simulate the validation logic used in SessionView
+    const shouldProcessEvent = (event: ComplexityAssessedEvent, sessionProjectId: string): boolean => {
+      return event.projectId === sessionProjectId;
+    };
+
+    // Event for current project should be processed
+    expect(shouldProcessEvent(eventForCurrentProject, currentProjectId)).toBe(true);
+
+    // Event for other project should be ignored (prevents cross-session pollution)
+    expect(shouldProcessEvent(eventForOtherProject, currentProjectId)).toBe(false);
+  });
+
   it('should allow all complexity levels', () => {
     for (const complexity of CHANGE_COMPLEXITY_LEVELS) {
       const event: ComplexityAssessedEvent = {
