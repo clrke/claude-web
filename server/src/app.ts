@@ -27,7 +27,9 @@ import {
   buildStage4Prompt,
   buildStage4PromptLean,
   buildStage5Prompt,
+  buildStage5PromptStreamlined,
   buildStage5PromptLean,
+  buildStage5PromptStreamlinedLean,
   buildPlanRevisionPrompt,
   buildPlanRevisionPromptLean,
   buildBatchAnswersContinuationPrompt,
@@ -157,6 +159,39 @@ function selectStage2PromptBuilder(
     );
   }
   return buildStage2Prompt(session, plan, currentIteration);
+}
+
+/**
+ * Select the appropriate Stage 5 prompt builder based on complexity assessment.
+ * Uses streamlined prompt for trivial/simple changes, full prompt for normal/complex.
+ */
+function selectStage5PromptBuilder(
+  session: Session,
+  plan: Plan,
+  prInfo: { title: string; branch: string; url: string },
+  useLean: boolean
+): string {
+  const complexity = session.assessedComplexity;
+
+  // Use streamlined prompt for trivial and simple changes
+  if (complexity === 'trivial' || complexity === 'simple') {
+    if (useLean) {
+      console.log(
+        `Using streamlined lean Stage 5 prompt for ${session.featureId} (complexity: ${complexity})`
+      );
+      return buildStage5PromptStreamlinedLean({ title: prInfo.title, url: prInfo.url }, complexity);
+    }
+    console.log(
+      `Using streamlined Stage 5 prompt for ${session.featureId} (complexity: ${complexity}, agents: ${session.suggestedAgents?.join(', ') || 'default'})`
+    );
+    return buildStage5PromptStreamlined(session, plan, prInfo);
+  }
+
+  // Use full prompt for normal, complex, or unassessed changes
+  if (useLean) {
+    return buildStage5PromptLean({ title: prInfo.title, url: prInfo.url });
+  }
+  return buildStage5Prompt(session, plan, prInfo);
 }
 
 /**
@@ -1819,10 +1854,9 @@ async function spawnStage4PRCreation(
       const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
       if (plan) {
         // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-        const useLeanStage5 = updatedSession.claudeSessionId && (updatedSession.prReviewCount || 0) > 0;
-        const stage5Prompt = useLeanStage5
-          ? buildStage5PromptLean(prInfo)
-          : buildStage5Prompt(updatedSession, plan, prInfo);
+        // Use streamlined prompt for trivial/simple changes
+        const useLeanStage5 = !!(updatedSession.claudeSessionId && (updatedSession.prReviewCount || 0) > 0);
+        const stage5Prompt = selectStage5PromptBuilder(updatedSession, plan, prInfo, useLeanStage5);
         await spawnStage5PRReview(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
       }
     } else {
@@ -2841,10 +2875,9 @@ export function createApp(
 
         // Build Stage 5 prompt and spawn PR review
         // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-        const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
-        const prompt = useLeanStage5
-          ? buildStage5PromptLean(prInfo)
-          : buildStage5Prompt(session, plan, prInfo);
+        // Use streamlined prompt for trivial/simple changes
+        const useLeanStage5 = !!(session.claudeSessionId && (session.prReviewCount || 0) > 0);
+        const prompt = selectStage5PromptBuilder(session, plan, prInfo, useLeanStage5);
         await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
       }
     } catch (error) {
@@ -3055,10 +3088,9 @@ export function createApp(
         };
 
         // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-        const useLeanStage5 = updatedSession.claudeSessionId && (updatedSession.prReviewCount || 0) > 0;
-        const basePrompt = useLeanStage5
-          ? buildStage5PromptLean(prInfo)
-          : buildStage5Prompt(updatedSession, plan, prInfo);
+        // Use streamlined prompt for trivial/simple changes
+        const useLeanStage5 = !!(updatedSession.claudeSessionId && (updatedSession.prReviewCount || 0) > 0);
+        const basePrompt = selectStage5PromptBuilder(updatedSession, plan, prInfo, useLeanStage5);
         const prompt = basePrompt + `
 
 ## Additional Focus Areas (User Request)
@@ -4231,10 +4263,9 @@ Please ensure you output proper completion markers when done.`;
             branch: session.featureBranch,
           };
           // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-          const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
-          const stage5Prompt = useLeanStage5
-            ? buildStage5PromptLean(prInfo)
-            : buildStage5Prompt(session, plan, prInfo);
+          // Use streamlined prompt for trivial/simple changes
+          const useLeanStage5 = !!(session.claudeSessionId && (session.prReviewCount || 0) > 0);
+          const stage5Prompt = selectStage5PromptBuilder(session, plan, prInfo, useLeanStage5);
           eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage5_retry', { stage: 5, subState: 'spawning_agent' });
           spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
           break;
@@ -4285,10 +4316,9 @@ Please ensure you output proper completion markers when done.`;
 
       // Build Stage 5 prompt with user remarks
       // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-      const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
-      let prompt = useLeanStage5
-        ? buildStage5PromptLean(prInfo)
-        : buildStage5Prompt(session, plan, prInfo);
+      // Use streamlined prompt for trivial/simple changes
+      const useLeanStage5 = !!(session.claudeSessionId && (session.prReviewCount || 0) > 0);
+      let prompt = selectStage5PromptBuilder(session, plan, prInfo, useLeanStage5);
       if (remarks && remarks.trim()) {
         prompt = `${prompt}\n\n## User Remarks for Re-Review\nThe user has requested a re-review with the following additional remarks:\n\n${remarks.trim()}`;
       }
@@ -4517,10 +4547,9 @@ Please ensure you output proper completion markers when done.`;
               const prInfo = await storage.readJson<{ title: string; branch: string; url: string }>(`${sessionDir}/pr.json`);
               if (!prInfo) break;
               // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-              const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
-              const prompt = useLeanStage5
-                ? buildStage5PromptLean(prInfo)
-                : buildStage5Prompt(session, plan, prInfo);
+              // Use streamlined prompt for trivial/simple changes
+              const useLeanStage5 = !!(session.claudeSessionId && (session.prReviewCount || 0) > 0);
+              const prompt = selectStage5PromptBuilder(session, plan, prInfo, useLeanStage5);
               await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
               break;
             }

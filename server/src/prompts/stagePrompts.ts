@@ -1585,6 +1585,174 @@ Fix: [Brief title]
 - Only approve when CI passes AND no issues`;
 }
 
+/**
+ * Review agent definitions for streamlined Stage 5.
+ * Maps agent type to focused review instructions for simple changes.
+ */
+const STAGE5_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
+  frontend: {
+    name: 'Frontend Reviewer',
+    focus: `Review UI changes:
+   - git diff main...HEAD -- '*.tsx' '*.ts' '*.css' (client paths)
+   - Correctness: Component logic, state handling
+   - Basic security: XSS risks, input sanitization
+   - Output: List of UI issues with file:line refs`,
+  },
+  backend: {
+    name: 'Backend Reviewer',
+    focus: `Review API changes:
+   - git diff main...HEAD -- (server paths)
+   - Correctness: Endpoint logic, error handling
+   - Basic security: Auth checks, input validation
+   - Output: List of backend issues with file:line refs`,
+  },
+  database: {
+    name: 'Database Reviewer',
+    focus: `Review data layer:
+   - git diff main...HEAD -- (schema/migration paths)
+   - Schema correctness, migration safety
+   - Output: List of data issues with file:line refs`,
+  },
+  testing: {
+    name: 'Test Reviewer',
+    focus: `Verify test coverage:
+   - Find test files matching changed source files
+   - Check: New code has tests
+   - Output: List of untested code paths`,
+  },
+  infrastructure: {
+    name: 'CI Reviewer',
+    focus: `Check CI status:
+   - Run: gh pr checks --watch
+   - Output: Final status (passing/failing)`,
+  },
+  documentation: {
+    name: 'Docs Reviewer',
+    focus: `Review documentation changes:
+   - Check: README updates, API docs
+   - Verify: Docs match implementation
+   - Output: Documentation gaps`,
+  },
+};
+
+/**
+ * Build Stage 5: Streamlined PR Review prompt for simple changes.
+ * Uses fewer review agents and focused review criteria.
+ */
+export function buildStage5PromptStreamlined(
+  session: Session,
+  plan: Plan,
+  prInfo: { title: string; branch: string; url: string }
+): string {
+  // Sanitize user-provided fields to prevent marker injection
+  const sanitized = sanitizeSessionFields(session);
+
+  const planStepsText = plan.steps
+    .map((step, i) => {
+      return `${i + 1}. [${step.id}] ${step.title}`;
+    })
+    .join('\n');
+
+  // Build review agents section based on suggestedAgents + always include CI
+  const suggestedAgents = session.suggestedAgents || ['frontend', 'backend'];
+  // Ensure CI/infrastructure is always included
+  const agentsToUse = [...new Set([...suggestedAgents, 'infrastructure'])];
+
+  const reviewAgentSections = agentsToUse
+    .map((agentType, index) => {
+      const agent = STAGE5_REVIEW_AGENTS[agentType];
+      if (!agent) return null;
+      return `${index + 1}. **${agent.name}**: ${agent.focus}`;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+
+  // Get the plan.json path from the plan.md path
+  const planJsonPath = session.claudePlanFilePath
+    ? session.claudePlanFilePath.replace(/plan\.md$/, 'plan.json')
+    : null;
+
+  return `You are reviewing a ${session.assessedComplexity || 'simple'} change PR. This is a focused review.
+
+## Feature
+Title: ${sanitized.title}
+Description: ${sanitized.featureDescription}
+
+## Plan Summary
+${planStepsText}
+
+## Pull Request
+URL: ${prInfo.url}
+Branch: ${prInfo.branch}
+
+## Instructions
+
+### Phase 1: Focused Review
+Since this is a ${session.assessedComplexity || 'simple'} change, spawn only these review agents:
+
+**Subagent Restrictions:**
+- Allowed: Read, Glob, Grep, Bash (read-only: git diff, git log, gh pr checks)
+- NOT allowed: Edit, Write, Bash with modifications
+
+${reviewAgentSections}
+
+Wait for all agents to complete.
+
+### Phase 2: Quick Findings Summary
+\`\`\`
+[REVIEW_CHECKPOINT]
+### Critical Issues (if any)
+- [file.ts:line] Issue description
+
+### No Issues Found
+All review agents found no significant issues.
+[/REVIEW_CHECKPOINT]
+\`\`\`
+
+### Phase 3: CI Status
+\`\`\`
+[CI_STATUS status="passing|failing|pending"]
+Check Status Summary
+[/CI_STATUS]
+\`\`\`
+
+### Phase 4: Document Findings (if any)
+If issues found, add as plan steps in:
+- ${session.claudePlanFilePath || '~/.claude-web/<session>/plan.md'}
+- ${planJsonPath || 'same directory as plan.json'}
+
+Format:
+\`\`\`
+[PLAN_STEP id="step-N" parent="null" status="pending" complexity="low"]
+Fix: [Issue title]
+[file.ts:line] Description of what needs fixing.
+[/PLAN_STEP]
+\`\`\`
+
+### Phase 5: Decision
+**If CI failing:** [CI_FAILED] with failure details
+**If issues found:** Add plan steps (system auto-returns to Stage 2)
+**If all good:** [PR_APPROVED] - ready to merge`;
+}
+
+/**
+ * Lean Stage 5 prompt for streamlined review.
+ * Very concise for simple changes.
+ */
+export function buildStage5PromptStreamlinedLean(
+  prInfo: { title: string; url: string },
+  assessedComplexity?: string
+): string {
+  return `${assessedComplexity || 'Simple'} PR review: ${prInfo.url}
+Title: ${prInfo.title}
+
+1. Spawn focused review agents (skip extensive security/perf review)
+2. Check CI: gh pr checks
+3. Critical issues → add [PLAN_STEP]
+4. CI failing → [CI_FAILED]
+5. All good → [PR_APPROVED]`;
+}
+
 // ============================================================================
 // LEAN PROMPTS - For subsequent calls that leverage --resume context
 // ============================================================================
