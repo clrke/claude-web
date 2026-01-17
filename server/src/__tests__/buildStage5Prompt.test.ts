@@ -1,8 +1,8 @@
 /**
- * Unit tests for buildStage5Prompt, buildStage5PromptLean, and buildStage5PromptStreamlined functions
+ * Unit tests for buildStage5Prompt, buildStage5PromptLean, buildStage5PromptStreamlined, and buildStage5PromptStreamlinedLean functions
  */
 
-import { buildStage5Prompt, buildStage5PromptLean, buildStage5PromptStreamlined } from '../prompts/stagePrompts';
+import { buildStage5Prompt, buildStage5PromptLean, buildStage5PromptStreamlined, buildStage5PromptStreamlinedLean } from '../prompts/stagePrompts';
 import type { Session, Plan, PlanStep } from '@claude-code-web/shared';
 
 // =============================================================================
@@ -605,6 +605,108 @@ describe('buildStage5PromptStreamlined', () => {
       expect(prompt).toContain('[READ-ONLY] Verify test coverage'); // testing
       expect(prompt).toContain('[READ-ONLY] Check CI status'); // infrastructure
       expect(prompt).toContain('[READ-ONLY] Review documentation changes'); // documentation
+    });
+  });
+});
+
+// =============================================================================
+// buildStage5PromptStreamlinedLean Tests
+// =============================================================================
+
+describe('buildStage5PromptStreamlinedLean', () => {
+  describe('basic content', () => {
+    it('should include PR URL', () => {
+      const prInfo = { title: 'feat: Add test feature', url: 'https://github.com/test/repo/pull/42' };
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('https://github.com/test/repo/pull/42');
+    });
+
+    it('should include PR title', () => {
+      const prInfo = { title: 'feat: Add test feature', url: 'https://github.com/test/repo/pull/42' };
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('feat: Add test feature');
+    });
+
+    it('should include complexity level', () => {
+      const prInfo = { title: 'feat: Add test feature', url: 'https://github.com/test/repo/pull/42' };
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'trivial');
+
+      expect(prompt).toContain('trivial');
+    });
+
+    it('should default to Simple when complexity not provided', () => {
+      const prInfo = { title: 'feat: Add test feature', url: 'https://github.com/test/repo/pull/42' };
+      const prompt = buildStage5PromptStreamlinedLean(prInfo);
+
+      expect(prompt).toContain('Simple');
+    });
+  });
+
+  describe('required markers', () => {
+    it('should include PLAN_STEP marker', () => {
+      const prInfo = { title: 'feat: Add test feature', url: 'https://github.com/test/repo/pull/42' };
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('[PLAN_STEP]');
+    });
+
+    it('should include CI_FAILED marker', () => {
+      const prInfo = { title: 'feat: Add test feature', url: 'https://github.com/test/repo/pull/42' };
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('[CI_FAILED]');
+    });
+
+    it('should include PR_APPROVED marker', () => {
+      const prInfo = { title: 'feat: Add test feature', url: 'https://github.com/test/repo/pull/42' };
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('[PR_APPROVED]');
+    });
+  });
+
+  describe('read-only enforcement warnings', () => {
+    it('should include READ-ONLY warning', () => {
+      const prInfo = { title: 'feat: Add test feature', url: 'https://github.com/test/repo/pull/42' };
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('Review agents: READ-ONLY only');
+    });
+
+    it('should include no file modifications warning', () => {
+      const prInfo = { title: 'feat: Add test feature', url: 'https://github.com/test/repo/pull/42' };
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('No file modifications allowed');
+    });
+  });
+
+  describe('lean prompt size', () => {
+    it('should be very concise (under 350 characters)', () => {
+      const prInfo = { title: 'feat: Add test feature', url: 'https://github.com/test/repo/pull/42' };
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt.length).toBeLessThan(350);
+    });
+
+    it('should be significantly smaller than full streamlined prompt', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['frontend', 'backend'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const fullPrompt = buildStage5PromptStreamlined(session, plan, prInfo);
+      const leanPrompt = buildStage5PromptStreamlinedLean(
+        { title: prInfo.title, url: prInfo.url },
+        'simple'
+      );
+
+      // Lean prompt should be less than 20% of full prompt
+      expect(leanPrompt.length).toBeLessThan(fullPrompt.length * 0.2);
     });
   });
 });
