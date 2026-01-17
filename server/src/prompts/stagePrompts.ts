@@ -1749,6 +1749,8 @@ export function buildStage5PromptStreamlinedLean(
   return `${assessedComplexity || 'Simple'} PR review: ${prInfo.url}
 Title: ${prInfo.title}
 
+Review agents: READ-ONLY only. No file modifications allowed.
+
 1. Spawn focused review agents (skip extensive security/perf review)
 2. Check CI: gh pr checks
 3. Critical issues → add [PLAN_STEP]

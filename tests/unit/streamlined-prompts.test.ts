@@ -817,7 +817,8 @@ describe('Streamlined Prompts', () => {
     it('should be very concise', () => {
       const prompt = buildStage5PromptStreamlinedLean(leanPrInfo, 'simple');
 
-      expect(prompt.length).toBeLessThan(300);
+      // Increased from 300 to 350 to account for read-only warning line
+      expect(prompt.length).toBeLessThan(350);
     });
 
     it('should include PR information', () => {
@@ -839,6 +840,13 @@ describe('Streamlined Prompts', () => {
       expect(prompt).toContain('[PLAN_STEP]');
       expect(prompt).toContain('[CI_FAILED]');
       expect(prompt).toContain('[PR_APPROVED]');
+    });
+
+    it('should include read-only warning', () => {
+      const prompt = buildStage5PromptStreamlinedLean(leanPrInfo, 'simple');
+
+      expect(prompt).toContain('Review agents: READ-ONLY only');
+      expect(prompt).toContain('No file modifications allowed');
     });
   });
 

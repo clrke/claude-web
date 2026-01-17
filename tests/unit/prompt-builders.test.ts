@@ -1933,7 +1933,8 @@ describe('Lean Prompt Builders', () => {
     it('should be very concise', () => {
       const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
 
-      expect(prompt.length).toBeLessThan(300);
+      // Increased from 300 to 350 to account for read-only warning line
+      expect(prompt.length).toBeLessThan(350);
     });
 
     it('should include PR information', () => {
